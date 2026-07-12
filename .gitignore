@@ -1,0 +1,8 @@
+# NEVER commit credentials
+*.ionapi
+.env
+
+# Python
+.venv/
+__pycache__/
+*.pyc
