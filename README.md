@@ -62,6 +62,27 @@ to their own Infor tenant can use this as-is.
 - **`ping_compass()`** — check Compass connectivity/auth. Returns
   `{"ok": true, "response": "pong"}` when healthy.
 
+## Using this in a Claude Project
+
+Two files are included to make Claude noticeably better at writing CSD/SX.e
+SQL out of the box, meant to be attached to a **Claude Project** alongside
+this MCP server:
+
+- **`SX_Dictionary_AI_v3.md`** — a business-term-to-table/field reference
+  covering 64 core CSD tables (customers, orders, inventory, pricing, AP/AR,
+  warehouse management, etc.), generated from Infor's CSD data-conversion
+  field maps. Add it as a **Project Knowledge** file.
+- **`compass-query-agent-instructions.md`** — a starting-point **Project
+  Instructions** template: tells Claude to default to writing/running SQL
+  rather than asking clarifying questions, lists always-on filters
+  (`cono`, `statustype`), and maps plain-language requests ("customers",
+  "orders", "inventory") to the right tables. **Fill in the bracketed
+  placeholders** (your company name, your warehouse code list) before using
+  it — the rest is generic to any CSD/SX.e install.
+
+Neither file is required for the MCP server itself to work — they're optional
+but recommended context for a Claude Project built around it.
+
 ## What's in this folder
 
 | File | Purpose |
@@ -75,6 +96,8 @@ to their own Infor tenant can use this as-is.
 | `_register_claude.py` | Registers/updates the `compass` entry in Claude Desktop's config; used by the installers |
 | `requirements.txt` | Python dependencies |
 | `.env.example` | Optional configuration overrides (none required) |
+| `SX_Dictionary_AI_v3.md` | CSD/SX.e table & field reference — optional Claude Project Knowledge file (see above) |
+| `compass-query-agent-instructions.md` | Starting-point Claude Project Instructions template (see above) |
 | `credentials.ionapi` | **You provide this** — your own Infor ION API service-account credentials. Never commit it; see Security below. |
 
 ## Manual setup
