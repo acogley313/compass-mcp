@@ -7,6 +7,7 @@ platform it runs on. Used by both install.command (macOS) and install.bat
 
 Usage:  python _register_claude.py <install_dir>
 """
+import glob
 import json
 import os
 import shutil
@@ -15,8 +16,35 @@ import sys
 
 def config_path() -> str:
     if sys.platform == "win32":
-        base = os.environ.get("APPDATA", os.path.expanduser("~"))
-        return os.path.join(base, "Claude", "claude_desktop_config.json")
+        appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
+        classic = os.path.join(appdata, "Claude", "claude_desktop_config.json")
+        if os.path.isfile(classic):
+            return classic
+
+        # Claude Desktop installed from the Microsoft Store runs as a packaged
+        # (MSIX) app, which sandboxes app data - it never sees %APPDATA%\Claude
+        # and instead reads/writes a virtualized copy under
+        # LocalAppData\Packages\<PackageFamilyName>\LocalCache\Roaming\Claude.
+        # The package family name has a publisher-specific hash suffix
+        # ("Claude_<hash>"), so glob for it rather than hardcoding it.
+        localappdata = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
+        packaged_cfg = sorted(glob.glob(os.path.join(
+            localappdata, "Packages", "Claude*", "LocalCache", "Roaming",
+            "Claude", "claude_desktop_config.json",
+        )))
+        if packaged_cfg:
+            return packaged_cfg[0]
+
+        # Neither config exists yet (e.g. Claude Desktop has never been
+        # launched). If a Store-packaged install directory exists, target the
+        # path it would use; otherwise assume the classic (non-Store) install.
+        packaged_dirs = sorted(glob.glob(os.path.join(localappdata, "Packages", "Claude*")))
+        if packaged_dirs:
+            return os.path.join(
+                packaged_dirs[0], "LocalCache", "Roaming", "Claude", "claude_desktop_config.json"
+            )
+
+        return classic
     if sys.platform == "darwin":
         return os.path.expanduser(
             "~/Library/Application Support/Claude/claude_desktop_config.json"

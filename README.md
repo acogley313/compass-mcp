@@ -132,6 +132,12 @@ If you'd rather not run the one-click installer, you can do it by hand:
 4. Open the Claude Desktop config file:
    - **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
    - **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+   - **Windows, Microsoft Store build of Claude Desktop:** the Store version
+     is sandboxed and never sees `%APPDATA%\Claude` — its config instead lives
+     at `%LOCALAPPDATA%\Packages\Claude_<hash>\LocalCache\Roaming\Claude\claude_desktop_config.json`
+     (the `<hash>` suffix is publisher-specific; there's normally only one
+     `Claude_*` folder under `Packages`). `_register_claude.py` (used by the
+     installers) already detects this automatically.
 
    (In Claude Desktop you can also reach it via **Settings → Developer → Edit Config**.)
 5. Add a `compass` entry (merge into existing `mcpServers` if present),
