@@ -4,21 +4,53 @@ REM Run this once after copying the folder to a Windows machine (double-click or
 setlocal EnableExtensions
 cd /d "%~dp0"
 
+REM %ProgramFiles(x86)% has parens in its own name, which breaks cmd's paren
+REM matching if referenced inside a multi-line ( ) block below - pull it into
+REM a plain variable once, up front, where that's not an issue.
+set "PFX86=%ProgramFiles(x86)%"
+
 echo Checking for Python 3.10+ ...
 set "PY="
 where python >nul 2>&1 && set "PY=python"
 if not defined PY (
   where py >nul 2>&1 && set "PY=py"
 )
+
+REM If Python was *just* installed, this window can still be running with a
+REM stale PATH - double-clicking a .bat file inherits Explorer's cached
+REM environment, which doesn't pick up a new install until you log off/on
+REM or reboot. Fall back to the standard python.org install locations by
+REM full path so a fresh install works right away without that.
+if not defined PY (
+  for %%B in (
+    "%LocalAppData%\Programs\Python"
+    "%ProgramFiles%"
+    "%PFX86%"
+  ) do (
+    if not defined PY (
+      for /f "delims=" %%D in ('dir /b /ad /o-n "%%~B\Python3*" 2^>nul') do (
+        if not defined PY if exist "%%~B\%%D\python.exe" set "PY=%%~B\%%D\python.exe"
+      )
+    )
+  )
+)
+if not defined PY (
+  if exist "%LocalAppData%\Programs\Python\Launcher\py.exe" set "PY=%LocalAppData%\Programs\Python\Launcher\py.exe"
+)
+
 if not defined PY (
   echo.
   echo ERROR: Python is not installed or not on PATH.
   echo Download from https://www.python.org/downloads/ and check "Add Python to PATH".
+  echo.
+  echo If you just installed Python and this still fails, log off and back
+  echo on ^(or restart the computer^), then run this again - Windows needs a
+  echo fresh session to pick up some installs.
   pause
   exit /b 1
 )
 
-for /f "delims=" %%v in ('%PY% --version 2^>^&1') do set "PYVER=%%v"
+for /f "delims=" %%v in ('"%PY%" --version 2^>^&1') do set "PYVER=%%v"
 echo %PYVER% | findstr /C:"was not found" >nul
 if not errorlevel 1 (
   echo.
@@ -32,7 +64,7 @@ if not errorlevel 1 (
   pause
   exit /b 1
 )
-%PY% -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)"
+"%PY%" -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)"
 if errorlevel 1 (
     echo.
     echo ERROR: Python is older than 3.10 ^(found %PYVER%^).
@@ -43,7 +75,7 @@ if errorlevel 1 (
 echo OK - found %PYVER%
 
 echo Creating virtual environment in .venv ...
-%PY% -m venv .venv
+"%PY%" -m venv .venv
 if errorlevel 1 (
     echo.
     echo ERROR: Could not create venv.

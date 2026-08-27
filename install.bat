@@ -11,6 +11,11 @@ REM  test the Compass connection, and register the server in Claude Desktop.
 REM ============================================================================
 setlocal EnableExtensions
 
+REM %ProgramFiles(x86)% has parens in its own name, which breaks cmd's paren
+REM matching if referenced inside a multi-line ( ) block below - pull it into
+REM a plain variable once, up front, where that's not an issue.
+set "PFX86=%ProgramFiles(x86)%"
+
 set "SOURCE_DIR=%~dp0"
 if "%SOURCE_DIR:~-1%"=="\" set "SOURCE_DIR=%SOURCE_DIR:~0,-1%"
 set "DEST=%USERPROFILE%\compass-mcp"
@@ -29,15 +34,42 @@ where python >nul 2>&1 && set "PY=python"
 if not defined PY (
   where py >nul 2>&1 && set "PY=py"
 )
+
+REM If Python was *just* installed, this window can still be running with a
+REM stale PATH - double-clicking a .bat file inherits Explorer's cached
+REM environment, which doesn't pick up a new install until you log off/on
+REM or reboot. Fall back to the standard python.org install locations by
+REM full path so a fresh install works right away without that.
+if not defined PY (
+  for %%B in (
+    "%LocalAppData%\Programs\Python"
+    "%ProgramFiles%"
+    "%PFX86%"
+  ) do (
+    if not defined PY (
+      for /f "delims=" %%D in ('dir /b /ad /o-n "%%~B\Python3*" 2^>nul') do (
+        if not defined PY if exist "%%~B\%%D\python.exe" set "PY=%%~B\%%D\python.exe"
+      )
+    )
+  )
+)
+if not defined PY (
+  if exist "%LocalAppData%\Programs\Python\Launcher\py.exe" set "PY=%LocalAppData%\Programs\Python\Launcher\py.exe"
+)
+
 if not defined PY (
   echo   ERROR: Python is not installed or not on PATH.
   echo   Install it from https://www.python.org/downloads/ and tick
   echo   "Add Python to PATH" during setup, then run this again.
   echo.
+  echo   If you just installed Python and this still fails, log off and
+  echo   back on ^(or restart the computer^), then run this again - Windows
+  echo   needs a fresh session to pick up some installs.
+  echo.
   pause
   exit /b 1
 )
-for /f "delims=" %%v in ('%PY% --version 2^>^&1') do set "PYVER=%%v"
+for /f "delims=" %%v in ('"%PY%" --version 2^>^&1') do set "PYVER=%%v"
 echo %PYVER% | findstr /C:"was not found" >nul
 if not errorlevel 1 (
   echo   ERROR: Windows has a "python" shortcut on PATH, but no real Python is
@@ -51,7 +83,7 @@ if not errorlevel 1 (
   pause
   exit /b 1
 )
-%PY% -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)"
+"%PY%" -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)"
 if errorlevel 1 (
   echo   ERROR: Python is older than 3.10 ^(found %PYVER%^).
   echo   Install a newer version from https://www.python.org/downloads/ then run this again.
@@ -91,7 +123,7 @@ echo.
 REM --- 3. Build the virtual environment ---------------------------------------
 echo [3/5] Building Python environment (this can take a minute) ...
 if exist "%DEST%\.venv" rmdir /s /q "%DEST%\.venv"
-%PY% -m venv "%DEST%\.venv"
+"%PY%" -m venv "%DEST%\.venv"
 if errorlevel 1 (
   echo   ERROR: Could not create the virtual environment.
   pause
