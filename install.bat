@@ -11,11 +11,6 @@ REM  test the Compass connection, and register the server in Claude Desktop.
 REM ============================================================================
 setlocal EnableExtensions
 
-REM %ProgramFiles(x86)% has parens in its own name, which breaks cmd's paren
-REM matching if referenced inside a multi-line ( ) block below - pull it into
-REM a plain variable once, up front, where that's not an issue.
-set "PFX86=%ProgramFiles(x86)%"
-
 set "SOURCE_DIR=%~dp0"
 if "%SOURCE_DIR:~-1%"=="\" set "SOURCE_DIR=%SOURCE_DIR:~0,-1%"
 set "DEST=%USERPROFILE%\compass-mcp"
@@ -40,22 +35,16 @@ REM stale PATH - double-clicking a .bat file inherits Explorer's cached
 REM environment, which doesn't pick up a new install until you log off/on
 REM or reboot. Fall back to the standard python.org install locations by
 REM full path so a fresh install works right away without that.
-if not defined PY (
-  for %%B in (
-    "%LocalAppData%\Programs\Python"
-    "%ProgramFiles%"
-    "%PFX86%"
-  ) do (
-    if not defined PY (
-      for /f "delims=" %%D in ('dir /b /ad /o-n "%%~B\Python3*" 2^>nul') do (
-        if not defined PY if exist "%%~B\%%D\python.exe" set "PY=%%~B\%%D\python.exe"
-      )
-    )
-  )
-)
-if not defined PY (
-  if exist "%LocalAppData%\Programs\Python\Launcher\py.exe" set "PY=%LocalAppData%\Programs\Python\Launcher\py.exe"
-)
+REM
+REM NOTE: these stay single-line (no ( ) block) on purpose. %ProgramFiles(x86)%
+REM expands to a value that itself contains literal parentheses ("C:\Program
+REM Files (x86)"), which corrupts cmd's paren-matching if it ever ends up
+REM inside a multi-line ( ) block - single-line "if ... do ..." has no block
+REM to match, so it's immune to that.
+if not defined PY for /f "delims=" %%D in ('dir /b /ad /o-n "%LocalAppData%\Programs\Python\Python3*" 2^>nul') do if not defined PY if exist "%LocalAppData%\Programs\Python\%%D\python.exe" set "PY=%LocalAppData%\Programs\Python\%%D\python.exe"
+if not defined PY for /f "delims=" %%D in ('dir /b /ad /o-n "%ProgramFiles%\Python3*" 2^>nul') do if not defined PY if exist "%ProgramFiles%\%%D\python.exe" set "PY=%ProgramFiles%\%%D\python.exe"
+if not defined PY for /f "delims=" %%D in ('dir /b /ad /o-n "%ProgramFiles(x86)%\Python3*" 2^>nul') do if not defined PY if exist "%ProgramFiles(x86)%\%%D\python.exe" set "PY=%ProgramFiles(x86)%\%%D\python.exe"
+if not defined PY if exist "%LocalAppData%\Programs\Python\Launcher\py.exe" set "PY=%LocalAppData%\Programs\Python\Launcher\py.exe"
 
 if not defined PY (
   echo   ERROR: Python is not installed or not on PATH.
