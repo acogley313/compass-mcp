@@ -1,0 +1,10 @@
+# Windows batch files must keep CRLF line endings - cmd.exe parses multi-line
+# (...) blocks unreliably when they're LF-only, which is easy to introduce by
+# accident when these files get edited from a Mac/Linux checkout.
+*.bat text eol=crlf
+
+# Shell/Python/docs stay LF regardless of platform.
+*.command text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.md text eol=lf
