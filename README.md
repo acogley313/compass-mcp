@@ -93,6 +93,7 @@ but recommended context for a Claude Project built around it.
 | `excel_writer.py` | Streaming, auto-splitting `.xlsx` writer used by `exporter.py` |
 | `install.command` / `install.bat` | One-click installer (recommended — see Quick start) |
 | `setup.sh` / `setup.bat` | Builds the venv in place, without touching Claude Desktop's config (see Manual setup) |
+| `find_python.ps1` | Windows-only: locates a usable Python 3.10+ interpreter for `install.bat`/`setup.bat` |
 | `_register_claude.py` | Registers/updates the `compass` entry in Claude Desktop's config; used by the installers |
 | `requirements.txt` | Python dependencies |
 | `.env.example` | Optional configuration overrides (none required) |

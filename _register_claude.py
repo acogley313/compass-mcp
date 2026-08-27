@@ -16,17 +16,18 @@ import sys
 
 def config_path() -> str:
     if sys.platform == "win32":
-        appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
-        classic = os.path.join(appdata, "Claude", "claude_desktop_config.json")
-        if os.path.isfile(classic):
-            return classic
-
         # Claude Desktop installed from the Microsoft Store runs as a packaged
         # (MSIX) app, which sandboxes app data - it never sees %APPDATA%\Claude
         # and instead reads/writes a virtualized copy under
         # LocalAppData\Packages\<PackageFamilyName>\LocalCache\Roaming\Claude.
         # The package family name has a publisher-specific hash suffix
         # ("Claude_<hash>"), so glob for it rather than hardcoding it.
+        #
+        # Check this FIRST, ahead of the classic path: if this script (or an
+        # older version of it) already ran once on a Store-install machine, it
+        # would have created a file at the classic %APPDATA%\Claude location
+        # even though Claude Desktop never reads it - so "the classic file
+        # exists" is not reliable evidence that it's the real one in use.
         localappdata = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
         packaged_cfg = sorted(glob.glob(os.path.join(
             localappdata, "Packages", "Claude*", "LocalCache", "Roaming",
@@ -35,16 +36,18 @@ def config_path() -> str:
         if packaged_cfg:
             return packaged_cfg[0]
 
-        # Neither config exists yet (e.g. Claude Desktop has never been
-        # launched). If a Store-packaged install directory exists, target the
-        # path it would use; otherwise assume the classic (non-Store) install.
+        # No packaged config yet - if a Store-packaged install directory
+        # exists at all (even before Claude has been launched once), target
+        # the path it would use.
         packaged_dirs = sorted(glob.glob(os.path.join(localappdata, "Packages", "Claude*")))
         if packaged_dirs:
             return os.path.join(
                 packaged_dirs[0], "LocalCache", "Roaming", "Claude", "claude_desktop_config.json"
             )
 
-        return classic
+        # No Store-packaged install found at all - classic (non-Store) install.
+        appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
+        return os.path.join(appdata, "Claude", "claude_desktop_config.json")
     if sys.platform == "darwin":
         return os.path.expanduser(
             "~/Library/Application Support/Claude/claude_desktop_config.json"

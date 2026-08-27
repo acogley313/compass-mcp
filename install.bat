@@ -23,63 +23,20 @@ echo ===============================================
 echo.
 
 REM --- 1. Find Python ---------------------------------------------------------
+REM Detection lives in find_python.ps1, not here. Batch's multi-line ( ) block
+REM parser expands %VAR% inline while scanning for the block's closing paren,
+REM so a variable whose *value* contains literal parentheses (e.g.
+REM %ProgramFiles(x86)% -> "C:\Program Files (x86)") can corrupt that scan and
+REM produce a baffling, action-at-a-distance ") was unexpected at this time"
+REM error somewhere later in the script. PowerShell has no such landmine.
 echo [1/5] Checking for Python 3.10+ ...
 set "PY="
-where python >nul 2>&1 && set "PY=python"
+for /f "usebackq delims=" %%P in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%SOURCE_DIR%\find_python.ps1"`) do set "PY=%%P"
 if not defined PY (
-  where py >nul 2>&1 && set "PY=py"
-)
-
-REM If Python was *just* installed, this window can still be running with a
-REM stale PATH - double-clicking a .bat file inherits Explorer's cached
-REM environment, which doesn't pick up a new install until you log off/on
-REM or reboot. Fall back to the standard python.org install locations by
-REM full path so a fresh install works right away without that.
-REM
-REM NOTE: these stay single-line (no ( ) block) on purpose. %ProgramFiles(x86)%
-REM expands to a value that itself contains literal parentheses ("C:\Program
-REM Files (x86)"), which corrupts cmd's paren-matching if it ever ends up
-REM inside a multi-line ( ) block - single-line "if ... do ..." has no block
-REM to match, so it's immune to that.
-if not defined PY for /f "delims=" %%D in ('dir /b /ad /o-n "%LocalAppData%\Programs\Python\Python3*" 2^>nul') do if not defined PY if exist "%LocalAppData%\Programs\Python\%%D\python.exe" set "PY=%LocalAppData%\Programs\Python\%%D\python.exe"
-if not defined PY for /f "delims=" %%D in ('dir /b /ad /o-n "%ProgramFiles%\Python3*" 2^>nul') do if not defined PY if exist "%ProgramFiles%\%%D\python.exe" set "PY=%ProgramFiles%\%%D\python.exe"
-if not defined PY for /f "delims=" %%D in ('dir /b /ad /o-n "%ProgramFiles(x86)%\Python3*" 2^>nul') do if not defined PY if exist "%ProgramFiles(x86)%\%%D\python.exe" set "PY=%ProgramFiles(x86)%\%%D\python.exe"
-if not defined PY if exist "%LocalAppData%\Programs\Python\Launcher\py.exe" set "PY=%LocalAppData%\Programs\Python\Launcher\py.exe"
-
-if not defined PY (
-  echo   ERROR: Python is not installed or not on PATH.
-  echo   Install it from https://www.python.org/downloads/ and tick
-  echo   "Add Python to PATH" during setup, then run this again.
-  echo.
-  echo   If you just installed Python and this still fails, log off and
-  echo   back on ^(or restart the computer^), then run this again - Windows
-  echo   needs a fresh session to pick up some installs.
-  echo.
   pause
   exit /b 1
 )
 for /f "delims=" %%v in ('"%PY%" --version 2^>^&1') do set "PYVER=%%v"
-echo %PYVER% | findstr /C:"was not found" >nul
-if not errorlevel 1 (
-  echo   ERROR: Windows has a "python" shortcut on PATH, but no real Python is
-  echo   installed - it just opens the Microsoft Store. Fix either way:
-  echo     1^) Install Python from https://www.python.org/downloads/ and tick
-  echo        "Add Python to PATH", then run this again. OR
-  echo     2^) Go to Settings -^> Apps -^> Advanced app settings -^> App execution
-  echo        aliases, turn OFF "python.exe" / "python3.exe", then install
-  echo        Python from the link above and run this again.
-  echo.
-  pause
-  exit /b 1
-)
-"%PY%" -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)"
-if errorlevel 1 (
-  echo   ERROR: Python is older than 3.10 ^(found %PYVER%^).
-  echo   Install a newer version from https://www.python.org/downloads/ then run this again.
-  echo.
-  pause
-  exit /b 1
-)
 echo   OK - found %PYVER%
 echo.
 

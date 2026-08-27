@@ -3,8 +3,10 @@
 # accident when these files get edited from a Mac/Linux checkout.
 *.bat text eol=crlf
 
-# Shell/Python/docs stay LF regardless of platform.
+# Shell/Python/PowerShell/docs stay LF regardless of platform - PowerShell
+# (unlike cmd.exe) has no CRLF requirement.
 *.command text eol=lf
 *.sh text eol=lf
 *.py text eol=lf
+*.ps1 text eol=lf
 *.md text eol=lf
