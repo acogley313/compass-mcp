@@ -99,7 +99,11 @@ echo
 
 # --- 5. Register in Claude Desktop --------------------------------------------
 bold "[5/5] Registering with Claude Desktop ..."
-if ! "$DEST/.venv/bin/python" "$DEST/_register_claude.py" "$DEST"; then
+echo "Optional: your CSD operator/login code (e.g. AC01) enables the"
+echo "fetch_csd tool, which reads CSD directly instead of the Compass"
+echo "datalake copy. Leave blank to skip — you can add it later."
+read -r -p "CSD operator init (blank to skip): " CSD_OPERATOR_INIT
+if ! "$DEST/.venv/bin/python" "$DEST/_register_claude.py" "$DEST" "$CSD_OPERATOR_INIT"; then
   err "Failed to update the Claude Desktop config."
   read -r -p "Press Return to close."
   exit 1

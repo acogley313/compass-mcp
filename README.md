@@ -41,7 +41,10 @@ to their own Infor tenant can use this as-is.
 
    This copies the folder to your home directory, builds an isolated Python
    environment, verifies it can connect to Compass, and registers the server
-   with Claude Desktop — all in one pass.
+   with Claude Desktop — all in one pass. Near the end it asks for your CSD
+   operator/login code (e.g. `AC01`) — this enables `fetch_csd` and
+   `fetch_csd_trn` (see **Two ways to read CSD data** below); leave it blank to
+   skip and add it later.
 
    > **Windows:** use `install.bat`, not `setup.bat` — `setup.bat` only builds
    > the Python environment and doesn't add Compass to Claude Desktop. The
@@ -72,6 +75,11 @@ This server exposes tools for **two environments**: Production and Training (TRN
 - **`query_compass(sql, max_rows=1000)`** — run a SQL query against production, return `columns`
   and `rows` (plus `row_count`, `truncated`, `query_id`). Failed queries return
   a clear `error` + `message`.
+- **`fetch_csd(table, where="", max_rows=1000)`** — read a table straight from
+  the live CSD/SX.e database instead of the Compass datalake replica. No SQL
+  (table name + optional WHERE clause, every column comes back), but faster
+  and immune to datalake replication lag. See **Two ways to read CSD data**
+  below. Requires the one-time `CSD_OPERATOR_INIT` setup described there.
 - **`export_compass_to_excel(sql, filename="compass_export", rows_per_file=500000)`**
   — run a SQL query in full and stream every row straight into one or more
   `.xlsx` files in your Downloads folder, instead of returning rows in chat.
@@ -86,6 +94,7 @@ This server exposes tools for **two environments**: Production and Training (TRN
 - **`query_compass_trn(sql, max_rows=1000)`** — same as `query_compass` but against training
 - **`export_compass_to_excel_trn(sql, filename="compass_export", rows_per_file=500000)`** — same as `export_compass_to_excel` but against training
 - **`ping_compass_trn()`** — check training Compass connectivity/auth
+- **`fetch_csd_trn(table, where="", max_rows=1000)`** — same as `fetch_csd` but against live training CSD (uses `credentials_trn.ionapi`)
 
 ## Using this in a Claude Project
 
@@ -108,6 +117,64 @@ Several files are included to enhance Claude's Compass query capabilities:
   it — the rest is generic to any CSD/SX.e install.
 
 The environment management file is recommended. The query optimization files are optional but recommended context for a Claude Project built around Compass.
+
+## Two ways to read CSD data
+
+This server can reach CSD data two different ways, and Claude picks between
+them based on your request:
+
+|                     | `query_compass`                        | `fetch_csd`                              |
+|---------------------|-----------------------------------------|-------------------------------------------|
+| Reads from          | Compass datalake (a **replica** of CSD)  | **CSD itself**, live                       |
+| Query language      | Full SQL — joins, `SELECT` any columns   | No SQL — one table + optional WHERE clause |
+| Columns returned     | Whatever you `SELECT`                    | Every column on the table, always          |
+| Speed                | Slower (async job: submit → poll → fetch)| Faster, no polling                         |
+| Freshness            | Can lag behind CSD (replication delay)   | Always current                             |
+
+Each has a training twin (`query_compass_trn` / `fetch_csd_trn`) that works
+the same way against your `credentials_trn.ionapi` tenant.
+
+Default to `query_compass` — it's the only one that can join tables or pick
+columns. Reach for `fetch_csd` when the datalake copy might be stale (a
+record was just changed in CSD and Compass hasn't caught up yet) or when you
+explicitly want to double-check against CSD directly, e.g.:
+
+> *"Check CSD directly for customer 8221's current price on 4A6H4018 — the*
+> *datalake might not have caught up yet."*
+
+WHERE-clause syntax for `fetch_csd` is CSD's own dialect, not SQL — string
+literals need **double** quotes (`whse = "TN01"`, not `'TN01'`), and there's
+no `WHERE` keyword in the string you pass.
+
+### One-time setup: `CSD_OPERATOR_INIT`
+
+`fetch_csd` needs one more thing than `query_compass`: a CSD operator/login
+code (e.g. `AC01`) to run as. This is **per person** — ask whoever
+administers CSD operators for yours if you don't already know it, or use
+your own login code from CSD.
+
+`install.command`/`install.bat` ask for it during setup (Quick start above),
+so on a fresh install there's nothing extra to do. To add or change it later
+— e.g. you skipped the prompt, or you're updating an existing install — edit
+your `env` block in `claude_desktop_config.json` by hand (same file the
+installer set up):
+
+```json
+"compass": {
+  "command": "/path/to/compass-mcp/.venv/bin/python",
+  "args": ["/path/to/compass-mcp/server.py"],
+  "env": { "CSD_OPERATOR_INIT": "AC01" }
+}
+```
+
+Then fully quit and reopen Claude Desktop. Until this is set, `fetch_csd`
+returns a clear error telling you to add it — every other tool keeps working
+as before.
+
+`fetch_csd_trn` uses the same code by default. If your training operator code
+differs from production, also set `CSD_OPERATOR_INIT_TRN` in the same `env`
+block. (Company number defaults to `1` for both; override with
+`CSD_COMPANY_NUMBER` / `CSD_COMPANY_NUMBER_TRN`.)
 
 ## What's in this folder
 
@@ -210,6 +277,18 @@ fully quit and reopen Claude Desktop. Since the server is already registered,
 you don't need to touch `claude_desktop_config.json` or re-run the installer
 — that step only happens once, the first time.
 
+> **Updating to pick up `fetch_csd` / `fetch_csd_trn` (CSD FetchWhere support):**
+> same drop-in replace as above — this release changes `server.py` and
+> `compass_client.py` (and `_register_claude.py` plus the installers if you
+> re-run those). No new dependencies. Then set your `CSD_OPERATOR_INIT`, either
+> by re-running the installer (it prompts for it and updates your existing
+> config in place) or by adding it to the `env` block in
+> `claude_desktop_config.json` by hand — see **One-time setup:
+> `CSD_OPERATOR_INIT`** above. For `fetch_csd_trn` you also need your
+> `credentials_trn.ionapi` in place, same as the other `_trn` tools. Skipping
+> the operator step is harmless: every existing tool keeps working, and the
+> fetch tools just return a clear error until it's set.
+
 ## Moving to another computer
 
 The whole folder is self-contained. To move it:
@@ -241,6 +320,18 @@ started.
 The Compass base URL is derived from your `.ionapi` tenant automatically —
 there's nothing tenant-specific to configure.
 
+`fetch_csd` is a different Infor interface entirely (`SX/rest`, not
+`DATAFABRIC/compass`), also derived from the same tenant, using the same
+bearer token:
+
+1. **Fetch a page** — `POST {csd_base}/serviceinterface/proxy/FetchWhere` with
+   `{CompanyNumber, Operator, TableName, WhereClause, BatchSize, RestartRowID}`.
+2. **Read rows** — the response holds them under `ttbl<tablename>` (e.g.
+   `ttblicsw`), or `{"NoRecords": ...}` when nothing matches.
+3. **Page** — a `RestartRowID` in the response means there's another page;
+   feed it back as the next request's `RestartRowID`. Its absence means
+   that was the last page.
+
 ## Configuration overrides (optional)
 
 All optional — see `.env.example`. Set them as environment variables in the
@@ -253,6 +344,9 @@ Claude config's `env` block if needed, e.g. a longer timeout for big queries:
   "env": { "COMPASS_POLL_TIMEOUT": "300", "COMPASS_MAX_ROWS": "5000" }
 }
 ```
+
+`fetch_csd` / `fetch_csd_trn` need `CSD_OPERATOR_INIT` set the same way — see
+**One-time setup: `CSD_OPERATOR_INIT`** above.
 
 ## Security
 
@@ -279,6 +373,9 @@ Claude config's `env` block if needed, e.g. a longer timeout for big queries:
 | Query `timeout` | Increase `COMPASS_POLL_TIMEOUT`. |
 | Verify from terminal | `./.venv/bin/python server.py --selftest` (production) or `./.venv/bin/python server.py --selftest --trn` (training) |
 | `export_compass_to_excel` fails partway through a huge query | Compass jobs can expire if left idle too long between pages; re-run the export. If it keeps happening on the same query, try a smaller `rows_per_file` so pages write to disk faster. |
+| `fetch_csd` returns `config_missing` | Add `CSD_OPERATOR_INIT` to the `env` block in `claude_desktop_config.json` (see **One-time setup** above) and restart Claude Desktop. |
+| `fetch_csd` returns `Operator is Invalid. Not On File` | `CSD_OPERATOR_INIT` isn't a valid CSD operator/login code. Double-check it (it's case-insensitive, but must exist in CSD). |
+| `fetch_csd` returns a where-clause error | CSD's WHERE dialect isn't SQL — no `SELECT`, and string literals need **double** quotes (`"TN01"`, not `'TN01'`). |
 
 ## License
 

@@ -35,6 +35,10 @@ MIN_PAGE_SIZE = 200
 
 PAGE_TOO_LARGE_CODE = "760"
 
+# CSD FetchWhere — see CompassClient.csd_fetch_where_page below.
+CSD_FETCHWHERE_PATH = "serviceinterface/proxy/FetchWhere"
+DEFAULT_CSD_BATCH_SIZE = int(os.environ.get("CSD_BATCH_SIZE", "500"))
+
 
 def find_ionapi_file(
     start: Path | None = None,
@@ -85,7 +89,12 @@ def find_ionapi_file(
 class IonApiConfig:
     """Parsed .ionapi file plus the derived URLs we need."""
 
-    def __init__(self, raw: dict[str, Any], base_url_env: str = "COMPASS_BASE_URL"):
+    def __init__(
+        self,
+        raw: dict[str, Any],
+        base_url_env: str = "COMPASS_BASE_URL",
+        csd_base_url_env: str = "CSD_BASE_URL",
+    ):
         self.tenant = raw["ti"]
         self.client_id = raw["ci"]
         self.client_secret = raw["cs"]
@@ -103,14 +112,27 @@ class IonApiConfig:
             f"{ion_base}/{self.tenant}/DATAFABRIC/compass/v2",
         ).rstrip("/")
 
+        # CSD FetchWhere (see below) — a completely different Infor interface
+        # (SX/rest, not DATAFABRIC/compass) that reads the live CSD database
+        # directly, bypassing the Compass datalake replica.
+        self.csd_base = os.environ.get(
+            csd_base_url_env,
+            f"{ion_base}/{self.tenant}/SX/rest",
+        ).rstrip("/")
+
     @classmethod
-    def load(cls, path: Path, base_url_env: str = "COMPASS_BASE_URL") -> "IonApiConfig":
+    def load(
+        cls,
+        path: Path,
+        base_url_env: str = "COMPASS_BASE_URL",
+        csd_base_url_env: str = "CSD_BASE_URL",
+    ) -> "IonApiConfig":
         with open(path, "r", encoding="utf-8") as fh:
             raw = json.load(fh)
         missing = [k for k in ("ti", "ci", "cs", "saak", "sask", "iu", "pu", "ot") if k not in raw]
         if missing:
             raise ValueError(f"{path} is missing required keys: {missing}")
-        return cls(raw, base_url_env=base_url_env)
+        return cls(raw, base_url_env=base_url_env, csd_base_url_env=csd_base_url_env)
 
 
 class TokenManager:
@@ -350,6 +372,79 @@ class CompassClient:
             yield offset, rows
             offset += len(rows)
 
+    # ----------------------------------------------------------------- #
+    # CSD FetchWhere — live reads straight from CSD, bypassing the
+    # Compass datalake replica. Same auth, a different Infor interface
+    # (SX/rest instead of DATAFABRIC/compass). No SQL: one table, an
+    # optional WHERE clause, every column comes back. Fast, and paginates
+    # via a RestartRowID the server hands back each page.
+    # ----------------------------------------------------------------- #
+
+    def csd_fetch_where_page(
+        self,
+        table: str,
+        where_clause: str,
+        restart_row_id: str,
+        batch_size: int,
+        operator: str,
+        company_number: int,
+    ) -> dict[str, Any]:
+        """One page of a FetchWhere call.
+
+        Returns {"rows": [...], "restart_row_id": str | None}. A `None`
+        restart_row_id means this was the last page. String literals in
+        `where_clause` must be double-quoted (CSD rejects single quotes).
+        """
+        url = f"{self.cfg.csd_base}/{CSD_FETCHWHERE_PATH}"
+        payload = {
+            "CompanyNumber": company_number,
+            "Operator": operator,
+            "TableName": table,
+            "WhereClause": where_clause or "",
+            "BatchSize": batch_size,
+            "RestartRowID": restart_row_id or "",
+        }
+        resp = self.client.post(
+            url,
+            json=payload,
+            headers=self._auth_headers({"Accept": "application/json"}),
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(
+                f"FetchWhere failed for table {table!r} ({resp.status_code}): {resp.text[:500]}"
+            )
+        text = resp.text.strip()
+        data = json.loads(text) if text else {}
+        if data.get("NoRecords"):
+            return {"rows": [], "restart_row_id": None}
+        rows = data.get(f"ttbl{table.lower()}", [])
+        if not isinstance(rows, list):
+            rows = []
+        return {"rows": rows, "restart_row_id": data.get("RestartRowID")}
+
+    def iter_csd_fetch_where(
+        self,
+        table: str,
+        where_clause: str,
+        operator: str,
+        company_number: int,
+        batch_size: int = DEFAULT_CSD_BATCH_SIZE,
+        should_cancel=None,
+    ):
+        """Yield successive row-batches from FetchWhere until exhausted."""
+        restart_row_id = ""
+        while True:
+            if should_cancel and should_cancel():
+                raise InterruptedError("cancelled")
+            page = self.csd_fetch_where_page(
+                table, where_clause, restart_row_id, batch_size, operator, company_number
+            )
+            if page["rows"]:
+                yield page["rows"]
+            restart_row_id = page["restart_row_id"]
+            if not restart_row_id:
+                break
+
 
 # --------------------------------------------------------------------------- #
 # Row normalization
@@ -378,6 +473,7 @@ def get_client_for_env(
     default_name: str = "credentials.ionapi",
     base_url_env: str = "COMPASS_BASE_URL",
     config_dir: Path | None = None,
+    csd_base_url_env: str = "CSD_BASE_URL",
 ) -> CompassClient:
     """Build a CompassClient for a specific environment (PRD, TRN, etc.).
 
@@ -386,6 +482,7 @@ def get_client_for_env(
         default_name: Default credential file name (e.g. credentials_trn.ionapi)
         base_url_env: Environment variable name for Compass base URL override (e.g. COMPASS_BASE_URL_TRN)
         config_dir: Directory to search for credentials (defaults to this module's directory)
+        csd_base_url_env: Environment variable name for CSD FetchWhere base URL override (e.g. CSD_BASE_URL_TRN)
 
     Returns:
         A CompassClient configured for the specified environment.
@@ -393,5 +490,6 @@ def get_client_for_env(
     cfg = IonApiConfig.load(
         find_ionapi_file(config_dir, env_var=env_var, default_name=default_name),
         base_url_env=base_url_env,
+        csd_base_url_env=csd_base_url_env,
     )
     return CompassClient(cfg, TokenManager(cfg))

@@ -105,10 +105,15 @@ echo.
 
 REM --- 5. Register in Claude Desktop ------------------------------------------
 echo [5/5] Registering with Claude Desktop ...
+echo Optional: your CSD operator/login code (e.g. AC01) enables the
+echo fetch_csd / fetch_csd_trn tools, which read CSD directly instead of
+echo the Compass datalake copy. Leave blank to skip - you can add it later.
+set "CSD_OPERATOR_INIT="
+set /p CSD_OPERATOR_INIT="CSD operator init (blank to skip): "
 REM Close Claude Desktop again in case it was opened during the steps above.
 powershell -NoProfile -ExecutionPolicy Bypass -File "%SOURCE_DIR%\claude_desktop.ps1" -Action Stop
 if "%errorlevel%"=="2" pause
-"%VENV_PY%" "%DEST%\_register_claude.py" "%DEST%"
+"%VENV_PY%" "%DEST%\_register_claude.py" "%DEST%" "%CSD_OPERATOR_INIT%"
 if errorlevel 1 (
   echo   ERROR: Failed to update the Claude Desktop config.
   goto fail

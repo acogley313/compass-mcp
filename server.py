@@ -16,11 +16,13 @@ Tools exposed:
     - query_compass(sql):              submit SQL, poll until done, return rows + columns
     - ping_compass():                  check Compass connectivity
     - export_compass_to_excel(sql):    export full result set to Excel
+    - fetch_csd(table, where):         read live CSD directly (bypasses the Compass replica)
 
   Training (credentials_trn.ionapi / IONAPI_FILE_TRN):
     - query_compass_trn(sql):          same as query_compass but against TRN
     - ping_compass_trn():              check TRN Compass connectivity
     - export_compass_to_excel_trn(sql): same as export_compass_to_excel but against TRN
+    - fetch_csd_trn(table, where):     same as fetch_csd but against TRN
 
 The actual HTTP/auth logic lives in compass_client.py, shared with the desktop
 query app in app/.
@@ -118,6 +120,7 @@ def _get_client_prod() -> CompassClient:
             env_var="IONAPI_FILE",
             default_name="credentials.ionapi",
             base_url_env="COMPASS_BASE_URL",
+            csd_base_url_env="CSD_BASE_URL",
         )
     return _compass_prod
 
@@ -129,8 +132,56 @@ def _get_client_trn() -> CompassClient:
             env_var="IONAPI_FILE_TRN",
             default_name="credentials_trn.ionapi",
             base_url_env="COMPASS_BASE_URL_TRN",
+            csd_base_url_env="CSD_BASE_URL_TRN",
         )
     return _compass_trn
+
+
+def _fetch_csd(trn: bool, table: str, where: str, max_rows: int) -> dict[str, Any]:
+    """Shared body of fetch_csd / fetch_csd_trn.
+
+    The operator init is per-person and has no default. TRN looks for
+    CSD_OPERATOR_INIT_TRN / CSD_COMPANY_NUMBER_TRN first and falls back to the
+    shared CSD_OPERATOR_INIT / CSD_COMPANY_NUMBER (company defaults to 1).
+    """
+    suffix = "_TRN" if trn else ""
+    operator = os.environ.get(f"CSD_OPERATOR_INIT{suffix}") or os.environ.get("CSD_OPERATOR_INIT")
+    if not operator:
+        return {
+            "error": "config_missing",
+            "message": (
+                'CSD_OPERATOR_INIT is not set. Add it to this server\'s "env" '
+                "block in claude_desktop_config.json (your CSD operator/login "
+                'code, e.g. "AC01") and restart Claude Desktop.'
+                + (" For TRN you can set CSD_OPERATOR_INIT_TRN if your training code differs." if trn else "")
+            ),
+        }
+    company = int(os.environ.get(f"CSD_COMPANY_NUMBER{suffix}") or os.environ.get("CSD_COMPANY_NUMBER") or "1")
+    try:
+        client = _get_client_trn() if trn else _get_client_prod()
+        all_rows: list[dict[str, Any]] = []
+        truncated = False
+        for batch in client.iter_csd_fetch_where(
+            table=table,
+            where_clause=where,
+            operator=operator,
+            company_number=company,
+        ):
+            all_rows.extend(batch)
+            if len(all_rows) >= max_rows:
+                truncated = True
+                all_rows = all_rows[:max_rows]
+                break
+        columns = list(all_rows[0].keys()) if all_rows else []
+        rows = [[row.get(c) for c in columns] for row in all_rows]
+        return {
+            "columns": columns,
+            "rows": rows,
+            "row_count": len(rows),
+            "truncated": truncated,
+        }
+    except Exception as e:
+        return {"error": "fetch_failed", "message": str(e)}
 
 
 def _get_exporter_prod() -> CompassExporter:
@@ -188,6 +239,37 @@ def query_compass(sql: str, max_rows: int = DEFAULT_MAX_ROWS) -> dict[str, Any]:
         return {"error": "timeout", "message": str(e)}
     except Exception as e:
         return {"error": "query_failed", "message": str(e)}
+
+
+@mcp.tool()
+def fetch_csd(table: str, where: str = "", max_rows: int = DEFAULT_MAX_ROWS) -> dict[str, Any]:
+    """Read rows straight from the live PRODUCTION CSD/SX.e database, bypassing
+    the Compass datalake replica that `query_compass` uses.
+
+    Use this instead of `query_compass` when the datalake copy might be out
+    of sync with CSD (e.g. a record was just changed and hasn't shown up in
+    Compass yet), or when the user explicitly asks for "live"/"current"/
+    "right now" data. Trade-offs versus `query_compass`:
+      - No SQL, no joins, no picking columns: give a table name and an
+        optional WHERE clause, and every column on that table comes back.
+      - Much faster for a single table, and paginates cleanly.
+      - String literals in the WHERE clause must be double-quoted, e.g.
+        `whse = "TN01"` — single quotes are rejected.
+
+    Args:
+        table: CSD table name (e.g. "icsw", "arsc", "pdsc"). Case-insensitive.
+        where: Optional WHERE clause with no "WHERE" keyword, e.g.
+            'cono = 1 and whse = "TN01"'. Leave blank to return every row.
+        max_rows: Maximum number of rows to return (default 1000). Pages are
+            fetched from CSD until this many rows are collected or the table
+            is exhausted.
+
+    Returns:
+        A dict with `columns` (list of column names) and `rows` (list of row
+        value lists), plus `row_count` and `truncated`. On failure, returns a
+        dict with an `error` message.
+    """
+    return _fetch_csd(False, table, where, max_rows)
 
 
 @mcp.tool()
@@ -345,6 +427,30 @@ def ping_compass_trn() -> dict[str, Any]:
         return client.ping()
     except Exception as e:
         return {"ok": False, "error": "ping_failed", "message": str(e)}
+
+
+@mcp.tool()
+def fetch_csd_trn(table: str, where: str = "", max_rows: int = DEFAULT_MAX_ROWS) -> dict[str, Any]:
+    """Read rows straight from the live TRAINING (TRN) CSD/SX.e database,
+    bypassing the Compass datalake replica that `query_compass_trn` uses.
+
+    Same behavior as `fetch_csd`, but against the training environment: no
+    SQL, no joins, no picking columns (every column on the table comes back),
+    fast and paginated, and string literals in the WHERE clause must be
+    double-quoted, e.g. `whse = "TN01"`. Use it when the TRN datalake copy
+    might be stale or the user asks for live training data.
+
+    Args:
+        table: CSD table name (e.g. "icsw", "arsc", "pdsc"). Case-insensitive.
+        where: Optional WHERE clause with no "WHERE" keyword, e.g.
+            'cono = 1 and whse = "TN01"'. Leave blank to return every row.
+        max_rows: Maximum number of rows to return (default 1000).
+
+    Returns:
+        A dict with `columns`, `rows`, `row_count` and `truncated`. On
+        failure, returns a dict with an `error` message.
+    """
+    return _fetch_csd(True, table, where, max_rows)
 
 
 if __name__ == "__main__":

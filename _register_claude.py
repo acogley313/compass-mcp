@@ -5,7 +5,7 @@ OS-aware: picks the correct config location and venv interpreter path for the
 platform it runs on. Used by both install.command (macOS) and install.bat
 (Windows). Backs up any existing config first.
 
-Usage:  python _register_claude.py <install_dir>
+Usage:  python _register_claude.py <install_dir> [csd_operator_init]
 """
 import glob
 import json
@@ -67,6 +67,7 @@ def main() -> int:
         print("usage: python _register_claude.py <install_dir>", file=sys.stderr)
         return 2
     dest = os.path.abspath(sys.argv[1])
+    csd_operator_init = sys.argv[2].strip() if len(sys.argv) > 2 else ""
     cfg = config_path()
 
     os.makedirs(os.path.dirname(cfg), exist_ok=True)
@@ -92,10 +93,19 @@ def main() -> int:
 
     if not isinstance(data, dict):
         data = {}
+    data.setdefault("mcpServers", {})
+    existing = data["mcpServers"].get("compass")
+    existing_env = existing.get("env") if isinstance(existing, dict) else None
     entry = {
         "command": venv_python(dest),
         "args": [os.path.join(dest, "server.py")],
     }
+    env = dict(existing_env) if isinstance(existing_env, dict) else {}
+    if csd_operator_init:
+        env["CSD_OPERATOR_INIT"] = csd_operator_init
+    if env:
+        entry["env"] = env
+
     # Refuse to register paths that don't exist - Claude Desktop would only
     # report a cryptic "spawn ... ENOENT" when it tries to start the server.
     for path in [entry["command"]] + entry["args"]:
@@ -103,7 +113,6 @@ def main() -> int:
             print(f"   ERROR: {path} does not exist - not registering it.", file=sys.stderr)
             return 1
 
-    data.setdefault("mcpServers", {})
     data["mcpServers"]["compass"] = entry
 
     with open(cfg, "w", encoding="utf-8") as f:
@@ -121,6 +130,8 @@ def main() -> int:
         return 1
 
     print("   config updated:", cfg)
+    if csd_operator_init:
+        print(f"   CSD_OPERATOR_INIT set to: {csd_operator_init}")
     return 0
 
 

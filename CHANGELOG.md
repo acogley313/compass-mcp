@@ -4,6 +4,14 @@ All notable changes to Compass MCP are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **`fetch_csd` / `fetch_csd_trn`** — read a table straight from the live CSD database
+  (Infor's FetchWhere service) instead of the Compass datalake replica, for when the
+  replica is stale or out of sync. No SQL: a table name plus an optional WHERE clause,
+  every column comes back, and it pages automatically. Uses the existing production /
+  training `.ionapi` credentials, plus a per-person `CSD_OPERATOR_INIT` (training can
+  override with `CSD_OPERATOR_INIT_TRN`). The installers now offer to set it.
+
 ### Fixed
 - **Windows installer on machines with the Microsoft Store Python** — `install.bat` no
   longer dead-ends with "Python not found". It now offers to install Python 3.13 for the
