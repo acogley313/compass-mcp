@@ -54,6 +54,11 @@ All notable changes to Compass MCP are documented in this file.
 ✅ `get_client()` and `CompassExporter()` work as before  
 ✅ Production tools are the primary tools (no `_prod` suffix needed)  
 
+### Known Limitations
+- Compass query timeout defaults to 120 seconds; override with `COMPASS_POLL_TIMEOUT`
+- Result pages capped at ~10MB; exporter automatically downscales on oversized pages
+- Excel sheets limited to 1,048,576 rows per sheet; exporter auto-splits across files
+
 ### Migration Path
 Users upgrading from v1.x → v2.0:
 1. Existing production tools work as-is
@@ -63,7 +68,7 @@ Users upgrading from v1.x → v2.0:
 
 ---
 
-## [1.0.0] - Previous Release
+## [1.0.0] - 2026-06-16
 
 ### Features
 - Single environment (production) support
@@ -71,48 +76,6 @@ Users upgrading from v1.x → v2.0:
 - `ping_compass()` — Check connectivity
 - Basic result normalization
 - Manual setup and CLI self-test
-
----
-
-## Release Notes
-
-### v2.0.0 Installation
-
-**For new users:** Follow the README.md Quick Start guide.
-
-**For existing users:** See UPGRADE_INSTRUCTIONS.md for safe, step-by-step upgrade process.
-
-### Key Breaking Changes (None)
-This is a backward-compatible release. Existing deployments will continue to work without changes. New functionality is purely additive.
-
-### Known Limitations
-- Compass query timeout defaults to 120 seconds; override with `COMPASS_POLL_TIMEOUT`
-- Result pages capped at ~10MB; exporter automatically downscales on oversized pages
-- Excel sheets limited to 1,048,576 rows per sheet; exporter auto-splits across files
-
-### Testing
-Both environments fully tested:
-- ✅ Production Compass connectivity
-- ✅ Training (TRN) Compass connectivity
-- ✅ OAuth token refresh
-- ✅ SQL query execution
-- ✅ Excel export with auto-splitting
-- ✅ Multi-page result pagination
-- ✅ Self-test for both environments
-
-### Contributors
-- Multi-environment architecture implementation
-- Excel export streaming implementation
-- Comprehensive documentation
-
----
-
-## Version History
-
-| Version | Release Date | Type | Notes |
-|---------|--------------|------|-------|
-| 2.0.0 | 2026-09-18 | Major | Multi-environment, Excel export, modularized |
-| 1.0.0 | 2026-06-16 | Initial | Single environment, basic SQL querying |
 
 ---
 
