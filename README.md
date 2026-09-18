@@ -16,17 +16,22 @@ to their own Infor tenant can use this as-is.
 - **Python 3.10+** — [python.org/downloads](https://www.python.org/downloads/)
   (Windows: tick **"Add Python to PATH"** during install)
 - **Claude Desktop**
-- A **service-account `.ionapi` credentials file** for your Infor tenant. Get
-  one from your Infor ION API administrator, or generate it yourself:
+- **One or two `.ionapi` credentials files** from your Infor tenant:
+  - `credentials.ionapi` — for production (required)
+  - `credentials_trn.ionapi` — for training environment (optional)
+  
+  Get these from your Infor ION API administrator, or generate them yourself:
   Infor OS Portal → **API Gateway** → **Authorized Apps** → create/select an
-  app → **Download credentials**. It downloads as a `.ionapi` file.
+  app → **Download credentials**. It downloads as a `.ionapi` file. If you need
+  access to both environments, you'll need separate credentials for each.
 
 ## Quick start
 
 1. **Download this repo** — click the green **Code** button above → **Download ZIP**
    — and unzip it anywhere (e.g. Desktop or Downloads).
-2. Drop your `.ionapi` file into the unzipped folder and rename it to
-   `credentials.ionapi`.
+2. Drop your credentials file(s) into the unzipped folder:
+   - Rename your production credentials to `credentials.ionapi` (required)
+   - (Optional) Rename a training credentials file to `credentials_trn.ionapi` if you have access to a training environment
 3. Run the installer:
    - **macOS:** double-click `install.command`
    - **Windows:** double-click `install.bat`
@@ -36,7 +41,11 @@ to their own Infor tenant can use this as-is.
    with Claude Desktop — all in one pass.
 4. **Fully quit and reopen Claude Desktop** (not just close the window —
    quit it completely so it reloads its MCP server list).
-5. Try it in a chat:
+5. (Optional but recommended) Set up a Claude Project to manage environment selection:
+   - Create a new Claude Project
+   - Add the contents of `claude_project_instructions.md` to your Project Instructions
+   - This enables Claude to ask which environment you want at the start of each conversation
+6. Try it in a chat:
    > *"Ping Compass to make sure it's connected."*
    >
    > *"Query Compass: select the first 10 rows from \<your table\>."*
@@ -48,26 +57,35 @@ to their own Infor tenant can use this as-is.
 
 ## Tools exposed to Claude
 
-- **`query_compass(sql, max_rows=1000)`** — run a SQL query, return `columns`
+This server exposes tools for **two environments**: Production and Training (TRN). Each environment has its own set of tools:
+
+### Production Environment
+- **`query_compass(sql, max_rows=1000)`** — run a SQL query against production, return `columns`
   and `rows` (plus `row_count`, `truncated`, `query_id`). Failed queries return
   a clear `error` + `message`.
 - **`export_compass_to_excel(sql, filename="compass_export", rows_per_file=500000)`**
   — run a SQL query in full and stream every row straight into one or more
   `.xlsx` files in your Downloads folder, instead of returning rows in chat.
-  Claude calls this automatically instead of `query_compass` when a result is
-  (or looks like it'll be) too big for chat. Streams to disk page-by-page
-  (never holding the full result in memory) and auto-splits into
-  `_part1.xlsx`, `_part2.xlsx`, etc. once a result exceeds the rows-per-file
-  setting — this is what makes multi-hundred-thousand-row exports practical.
-- **`ping_compass()`** — check Compass connectivity/auth. Returns
+  Streams to disk page-by-page (never holding the full result in memory) and
+  auto-splits into `_part1.xlsx`, `_part2.xlsx`, etc. once a result exceeds
+  the rows-per-file setting — this is what makes multi-hundred-thousand-row
+  exports practical.
+- **`ping_compass()`** — check production Compass connectivity/auth. Returns
   `{"ok": true, "response": "pong"}` when healthy.
+
+### Training (TRN) Environment
+- **`query_compass_trn(sql, max_rows=1000)`** — same as `query_compass` but against training
+- **`export_compass_to_excel_trn(sql, filename="compass_export", rows_per_file=500000)`** — same as `export_compass_to_excel` but against training
+- **`ping_compass_trn()`** — check training Compass connectivity/auth
 
 ## Using this in a Claude Project
 
-Two files are included to make Claude noticeably better at writing CSD/SX.e
-SQL out of the box, meant to be attached to a **Claude Project** alongside
-this MCP server:
+Several files are included to enhance Claude's Compass query capabilities:
 
+### Environment Management
+- **`claude_project_instructions.md`** — **Recommended**: Add this file's contents to your Claude Project's **Project Instructions** to enable seamless environment selection. Claude will ask which environment (Production or Training) you want to use at the start of each conversation, then automatically use the corresponding tools throughout the session. See the file for full instructions.
+
+### Query Optimization (Optional)
 - **`SX_Dictionary_AI_v3.md`** — a business-term-to-table/field reference
   covering 64 core CSD tables (customers, orders, inventory, pricing, AP/AR,
   warehouse management, etc.), generated from Infor's CSD data-conversion
@@ -80,26 +98,27 @@ this MCP server:
   placeholders** (your company name, your warehouse code list) before using
   it — the rest is generic to any CSD/SX.e install.
 
-Neither file is required for the MCP server itself to work — they're optional
-but recommended context for a Claude Project built around it.
+The environment management file is recommended. The query optimization files are optional but recommended context for a Claude Project built around Compass.
 
 ## What's in this folder
 
 | File | Purpose |
 |------|---------|
-| `server.py` | The MCP server (Python, uses the official MCP SDK + httpx) |
-| `compass_client.py` | Shared Compass API client — auth, submit/poll/paginate |
-| `exporter.py` | Orchestrates a full query run (submit → poll → paginate → write) for `export_compass_to_excel` |
+| `server.py` | The MCP server (Python, uses the official MCP SDK + httpx) — supports both production and training environments |
+| `compass_client.py` | Shared Compass API client — auth, submit/poll/paginate, environment-aware credential discovery |
+| `exporter.py` | Orchestrates a full query run (submit → poll → paginate → write) for `export_compass_to_excel` — supports both environments |
 | `excel_writer.py` | Streaming, auto-splitting `.xlsx` writer used by `exporter.py` |
 | `install.command` / `install.bat` | One-click installer (recommended — see Quick start) |
 | `setup.sh` / `setup.bat` | Builds the venv in place, without touching Claude Desktop's config (see Manual setup) |
 | `find_python.ps1` | Windows-only: locates a usable Python 3.10+ interpreter for `install.bat`/`setup.bat` |
 | `_register_claude.py` | Registers/updates the `compass` entry in Claude Desktop's config; used by the installers |
 | `requirements.txt` | Python dependencies |
-| `.env.example` | Optional configuration overrides (none required) |
+| `.env.example` | Optional configuration overrides (none required) — documents both production and TRN env vars |
+| `claude_project_instructions.md` | **Recommended** — Claude Project instructions for environment-aware querying (see Using this in a Claude Project) |
 | `SX_Dictionary_AI_v3.md` | CSD/SX.e table & field reference — optional Claude Project Knowledge file (see above) |
 | `compass-query-agent-instructions.md` | Starting-point Claude Project Instructions template (see above) |
-| `credentials.ionapi` | **You provide this** — your own Infor ION API service-account credentials. Never commit it; see Security below. |
+| `credentials.ionapi` | **You provide this** — your own Infor ION API service-account credentials for production. Never commit it; see Security below. |
+| `credentials_trn.ionapi` | **You provide this** — your own Infor ION API service-account credentials for training environment (optional). Never commit it; see Security below. |
 
 ## Manual setup
 
@@ -244,7 +263,7 @@ Claude config's `env` block if needed, e.g. a longer timeout for big queries:
 | `OAuth token request failed` | Credentials expired/revoked. Re-download the `.ionapi` from the Infor ION API portal and replace `credentials.ionapi`. |
 | `No .ionapi file found` | Ensure `credentials.ionapi` sits next to `server.py`, or set `IONAPI_FILE`. |
 | Query `timeout` | Increase `COMPASS_POLL_TIMEOUT`. |
-| Verify from terminal | `./.venv/bin/python server.py --selftest` |
+| Verify from terminal | `./.venv/bin/python server.py --selftest` (production) or `./.venv/bin/python server.py --selftest --trn` (training) |
 | `export_compass_to_excel` fails partway through a huge query | Compass jobs can expire if left idle too long between pages; re-run the export. If it keeps happening on the same query, try a smaller `rows_per_file` so pages write to disk faster. |
 
 ## License

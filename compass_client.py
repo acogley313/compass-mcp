@@ -36,49 +36,56 @@ MIN_PAGE_SIZE = 200
 PAGE_TOO_LARGE_CODE = "760"
 
 
-def find_ionapi_file(start: Path | None = None) -> Path:
-    """Locate the .ionapi credentials file.
+def find_ionapi_file(
+    start: Path | None = None,
+    env_var: str = "IONAPI_FILE",
+    default_name: str = "credentials.ionapi",
+) -> Path:
+    """Locate an .ionapi credentials file.
 
     Priority:
-      1. IONAPI_FILE env var (absolute or relative path)
-      2. credentials.ionapi next to this module
-      3. the first *.ionapi file next to this module
+      1. The env var named by *env_var* (absolute or relative path, ~ expansion supported)
+      2. A file named *default_name* next to this module
+      3. (only for default env) the first *.ionapi file next to this module
       4. ~/compass-mcp/credentials.ionapi — the standard install location used
          by install.command/install.bat, so standalone tools (like the Query
          App shared on its own) can find credentials from an existing
          compass-mcp install without needing their own copy.
     """
-    env_path = os.environ.get("IONAPI_FILE")
+    env_path = os.environ.get(env_var)
     if env_path:
         p = Path(env_path).expanduser()
         if not p.is_file():
-            raise FileNotFoundError(f"IONAPI_FILE points to a missing file: {p}")
+            raise FileNotFoundError(f"{env_var} points to a missing file: {p}")
         return p
 
     here = (start or Path(__file__).resolve().parent)
-    default = here / "credentials.ionapi"
+    default = here / default_name
     if default.is_file():
         return default
 
-    candidates = sorted(here.glob("*.ionapi"))
-    if candidates:
-        return candidates[0]
+    # Fallback glob only for the production (default) case so TRN doesn't
+    # accidentally pick up the wrong file.
+    if default_name == "credentials.ionapi":
+        candidates = sorted(here.glob("*.ionapi"))
+        if candidates:
+            return candidates[0]
 
-    mcp_install = Path.home() / "compass-mcp" / "credentials.ionapi"
+    mcp_install = Path.home() / "compass-mcp" / default_name
     if mcp_install.is_file():
         return mcp_install
 
     raise FileNotFoundError(
-        "No .ionapi file found. Set IONAPI_FILE, place credentials.ionapi "
+        f"No .ionapi file found. Set {env_var}, place {default_name} "
         f"next to {here}, or install compass-mcp first (this tool also looks "
-        "for ~/compass-mcp/credentials.ionapi)."
+        f"for ~/{mcp_install.parent.name}/{default_name})."
     )
 
 
 class IonApiConfig:
     """Parsed .ionapi file plus the derived URLs we need."""
 
-    def __init__(self, raw: dict[str, Any]):
+    def __init__(self, raw: dict[str, Any], base_url_env: str = "COMPASS_BASE_URL"):
         self.tenant = raw["ti"]
         self.client_id = raw["ci"]
         self.client_secret = raw["cs"]
@@ -92,18 +99,18 @@ class IonApiConfig:
         self.token_url = f"{pu}/{ot}"
 
         self.compass_base = os.environ.get(
-            "COMPASS_BASE_URL",
+            base_url_env,
             f"{ion_base}/{self.tenant}/DATAFABRIC/compass/v2",
         ).rstrip("/")
 
     @classmethod
-    def load(cls, path: Path) -> "IonApiConfig":
+    def load(cls, path: Path, base_url_env: str = "COMPASS_BASE_URL") -> "IonApiConfig":
         with open(path, "r", encoding="utf-8") as fh:
             raw = json.load(fh)
         missing = [k for k in ("ti", "ci", "cs", "saak", "sask", "iu", "pu", "ot") if k not in raw]
         if missing:
             raise ValueError(f"{path} is missing required keys: {missing}")
-        return cls(raw)
+        return cls(raw, base_url_env=base_url_env)
 
 
 class TokenManager:
@@ -363,4 +370,28 @@ def rows_to_columns_and_values(rows: list[Any], status_columns: list[str] | None
 def get_client(config_dir: Path | None = None) -> CompassClient:
     """Build a fresh CompassClient from the .ionapi file (no caching)."""
     cfg = IonApiConfig.load(find_ionapi_file(config_dir))
+    return CompassClient(cfg, TokenManager(cfg))
+
+
+def get_client_for_env(
+    env_var: str = "IONAPI_FILE",
+    default_name: str = "credentials.ionapi",
+    base_url_env: str = "COMPASS_BASE_URL",
+    config_dir: Path | None = None,
+) -> CompassClient:
+    """Build a CompassClient for a specific environment (PRD, TRN, etc.).
+
+    Args:
+        env_var: Environment variable name for the credentials path (e.g. IONAPI_FILE_TRN)
+        default_name: Default credential file name (e.g. credentials_trn.ionapi)
+        base_url_env: Environment variable name for Compass base URL override (e.g. COMPASS_BASE_URL_TRN)
+        config_dir: Directory to search for credentials (defaults to this module's directory)
+
+    Returns:
+        A CompassClient configured for the specified environment.
+    """
+    cfg = IonApiConfig.load(
+        find_ionapi_file(config_dir, env_var=env_var, default_name=default_name),
+        base_url_env=base_url_env,
+    )
     return CompassClient(cfg, TokenManager(cfg))
