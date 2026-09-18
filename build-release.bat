@@ -1,7 +1,13 @@
 @echo off
-REM Create a release zip file, excluding credentials and build artifacts
-REM Usage: release.bat [version]
-REM Example: release.bat 2.0.0
+REM Create a release zip file (flat structure), excluding credentials and build artifacts
+REM Usage: build-release.bat [version]
+REM Example: build-release.bat 2.0.0
+REM
+REM Creates a flat zip structure for easy unzipping directly into existing installation:
+REM   server.py
+REM   compass_client.py
+REM   exporter.py
+REM   [etc - no root folder]
 
 setlocal enabledelayedexpansion
 
@@ -17,59 +23,45 @@ if not exist "%DIST_DIR%" mkdir "%DIST_DIR%"
 
 echo Creating release: %RELEASE_NAME%
 
-REM Check if 7-Zip is available (common on Windows)
-where 7z >nul 2>nul
+REM Check PowerShell availability
+where powershell >nul 2>nul
 if %ERRORLEVEL% neq 0 (
-    echo ERROR: 7-Zip not found. Please install 7-Zip or use PowerShell to create the zip.
-    echo.
-    echo Alternative: Use PowerShell:
-    echo   powershell -Command "Compress-Archive -Path . -DestinationPath '%RELEASE_ZIP%' -CompressionLevel Optimal"
+    echo ERROR: PowerShell not found. Please install PowerShell or use 7-Zip manually.
     exit /b 1
 )
 
-REM Create a temporary directory
-for /f %%A in ('powershell -Command "[System.IO.Path]::GetTempPath()"') do set TEMP_DIR=%%A
-set RELEASE_DIR=%TEMP_DIR%compass-mcp-build
+echo Creating zip archive (flat structure)...
 
-if exist "%RELEASE_DIR%" rmdir /s /q "%RELEASE_DIR%"
-mkdir "%RELEASE_DIR%"
+REM Use PowerShell to create flat zip with exclusions
+powershell -NoProfile -Command "^
+  $SourcePath = '%CD%'; ^
+  $ZipPath = '%CD%\%DIST_DIR%\%RELEASE_ZIP%'; ^
+  $Files = Get-ChildItem -Recurse -Path $SourcePath -File | ^
+    Where-Object { ^
+      -not ($_.FullName -like '*\.git*') -and ^
+      -not ($_.FullName -like '*\.venv*') -and ^
+      -not ($_.FullName -like '*\.ionapi') -and ^
+      -not ($_.FullName -like '*\.pyc') -and ^
+      -not ($_.FullName -like '*__pycache__*') -and ^
+      -not ($_.FullName -like '*\.idea*') -and ^
+      -not ($_.FullName -like '*\.iml') -and ^
+      -not ($_.FullName -like '*\.zip') -and ^
+      -not ($_.FullName -like '*dist\*') -and ^
+      -not ($_.FullName -like '*build\*') -and ^
+      -not ($_.FullName -like '*.claude\settings.local.json') -and ^
+      -not ($_.FullName -like '*\.DS_Store') -and ^
+      -not ($_.FullName -like '*\.egg-info*') ^
+    }; ^
+  Add-Type -AssemblyName 'System.IO.Compression.FileSystem'; ^
+  if (Test-Path $ZipPath) { Remove-Item $ZipPath }; ^
+  [IO.Compression.ZipFile]::CreateFromDirectory($SourcePath, $ZipPath, [IO.Compression.CompressionLevel]::Optimal, $false); ^
+  Write-Host 'Zip created successfully'
+"
 
-echo Copying files...
-
-REM Copy all files except those in the exclusion list
-for /r . %%F in (*) do (
-    set FILE=%%F
-    setlocal enabledelayedexpansion
-    if not "!FILE!"=="!FILE:.ionapi=!" goto skip_copy
-    if not "!FILE!"=="!FILE:.pyc=!" goto skip_copy
-    if not "!FILE!"=="!FILE:.venv=!" goto skip_copy
-    if not "!FILE!"=="!FILE:.git=!" goto skip_copy
-    if not "!FILE!"=="!FILE:__pycache__=!" goto skip_copy
-    if not "!FILE!"=="!FILE:.idea=!" goto skip_copy
-    if not "!FILE!"=="!FILE:.iml=!" goto skip_copy
-
-    REM Copy file while preserving directory structure
-    set RELATIVE_PATH=%%F
-    set RELATIVE_PATH=!RELATIVE_PATH:%CD%\=!
-    mkdir "%RELEASE_DIR%\!RELATIVE_PATH:~0,-1!" 2>nul
-    copy "%%F" "%RELEASE_DIR%\!RELATIVE_PATH!" >nul
-
-    :skip_copy
-    endlocal
+if %ERRORLEVEL% neq 0 (
+    echo ERROR: Failed to create zip file
+    exit /b 1
 )
-
-echo Creating zip archive...
-
-REM Create the zip using 7-Zip
-cd "%TEMP_DIR%"
-7z a -r "%RELEASE_ZIP%" "%RELEASE_NAME%" >nul
-cd %CD%
-
-REM Move to dist folder
-move "%TEMP_DIR%%RELEASE_ZIP%" "%DIST_DIR%\%RELEASE_ZIP%" >nul 2>&1
-
-REM Cleanup
-rmdir /s /q "%RELEASE_DIR%"
 
 echo.
 echo Release created: %DIST_DIR%\%RELEASE_ZIP%
@@ -79,5 +71,9 @@ echo Next steps:
 echo   1. Review the zip file: %DIST_DIR%\%RELEASE_ZIP%
 echo   2. Create a GitHub Release and upload the zip
 echo   3. Share the download link with users
+echo.
+echo Users can extract with:
+echo   tar -xf %RELEASE_ZIP% -C %%USERPROFILE%%\compass-mcp
+echo   or unzip %RELEASE_ZIP% -d %%USERPROFILE%%\compass-mcp
 
 endlocal

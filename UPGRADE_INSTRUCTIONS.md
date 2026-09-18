@@ -27,84 +27,65 @@ cp -r ~/compass-mcp ~/compass-mcp.backup
 xcopy C:\Users\YourName\compass-mcp C:\Users\YourName\compass-mcp.backup /E /I
 ```
 
-## Upgrade Steps
+## Upgrade Steps (Simple!)
 
-### Option A: Fresh Install (Recommended for First-Time Setup)
-If you want a clean installation, download the latest release and follow the Quick Start guide in the README.
-
-### Option B: In-Place Upgrade (For Existing Users)
-
-#### 1. Download the Latest Release
-- Download `compass-mcp-<version>.zip` from GitHub Releases
-- Unzip it to a temporary location
-
-#### 2. Backup Your Existing Installation
+### 1. Backup Your Existing Installation
 ```bash
 # macOS / Linux
 cp -r ~/compass-mcp ~/compass-mcp.backup
 
 # Windows
-xcopy C:\Users\YourName\compass-mcp C:\Users\YourName\compass-mcp.backup /E /I
+xcopy %USERPROFILE%\compass-mcp %USERPROFILE%\compass-mcp.backup /E /I
 ```
 
-#### 3. Update the Python Files
-Copy these files from the downloaded release to your existing installation:
+### 2. Download and Extract the Release
+- Download `compass-mcp-<version>.zip` from GitHub Releases
+- Extract directly into your existing `compass-mcp` folder:
 
 ```bash
 # macOS / Linux
-cp <downloaded>/server.py ~/compass-mcp/
-cp <downloaded>/compass_client.py ~/compass-mcp/
-cp <downloaded>/exporter.py ~/compass-mcp/
-cp <downloaded>/excel_writer.py ~/compass-mcp/
-cp <downloaded>/requirements.txt ~/compass-mcp/
-cp <downloaded>/.env.example ~/compass-mcp/
+unzip compass-mcp-2.0.0.zip -d ~/compass-mcp
 
 # Windows
-copy <downloaded>\server.py C:\Users\YourName\compass-mcp\
-copy <downloaded>\compass_client.py C:\Users\YourName\compass-mcp\
-copy <downloaded>\exporter.py C:\Users\YourName\compass-mcp\
-copy <downloaded>\excel_writer.py C:\Users\YourName\compass-mcp\
-copy <downloaded>\requirements.txt C:\Users\YourName\compass-mcp\
-copy <downloaded>\.env.example C:\Users\YourName\compass-mcp\
+tar -xf compass-mcp-2.0.0.zip -C %USERPROFILE%\compass-mcp
+# OR use Explorer: right-click zip → Extract All... → browse to compass-mcp folder
 ```
 
-#### 4. Update Python Dependencies
+When prompted to replace existing files, click **Yes to All**.
+
+### 3. Update Python Dependencies
 ```bash
 # macOS / Linux
 cd ~/compass-mcp
 .venv/bin/pip install -r requirements.txt
 
 # Windows
-cd C:\Users\YourName\compass-mcp
+cd %USERPROFILE%\compass-mcp
 .venv\Scripts\pip install -r requirements.txt
 ```
 
-#### 5. (Optional) Add Training Environment Credentials
-If you have access to a training environment, add the credentials file:
+### 4. (Optional) Add Training Environment Credentials
+If you have access to a training environment, copy your credentials file:
 
 ```bash
 # macOS / Linux
-# Copy your training credentials file to:
-~/compass-mcp/credentials_trn.ionapi
+cp <your-trn-credentials>.ionapi ~/compass-mcp/credentials_trn.ionapi
 
 # Windows
-# Copy your training credentials file to:
-C:\Users\YourName\compass-mcp\credentials_trn.ionapi
+copy <your-trn-credentials>.ionapi %USERPROFILE%\compass-mcp\credentials_trn.ionapi
 ```
 
-#### 6. Test the Upgrade
+### 5. Test the Upgrade
 ```bash
-# macOS / Linux - Test production
-.venv/bin/python server.py --selftest
+# macOS / Linux
+cd ~/compass-mcp
+.venv/bin/python server.py --selftest          # Production
+.venv/bin/python server.py --selftest --trn    # Training (if you added TRN creds)
 
-# macOS / Linux - Test training (if you added credentials_trn.ionapi)
-.venv/bin/python server.py --selftest --trn
-
-# Windows - Test production
-.venv\Scripts\python server.py --selftest
-
-# Windows - Test training (if you added credentials_trn.ionapi)
-.venv\Scripts\python server.py --selftest --trn
+# Windows
+cd %USERPROFILE%\compass-mcp
+.venv\Scripts\python server.py --selftest      # Production
+.venv\Scripts\python server.py --selftest --trn # Training (if you added TRN creds)
 ```
 
 Expected output:
@@ -120,14 +101,14 @@ Pinging Production Compass...
 }
 ```
 
-#### 7. Restart Claude Desktop
+### 6. Restart Claude Desktop
 Fully quit and reopen Claude Desktop (not just closing the window — completely quit it).
 
-#### 8. (Optional) Update Claude Project Instructions
+### 7. (Optional) Update Claude Project Instructions
 For the best experience with environment selection:
 
 1. Go to your Claude Project settings
-2. Copy the contents of `claude_project_instructions.md`
+2. Copy the contents of `claude_project_instructions.md` 
 3. Paste into your Project Instructions field
 4. Save
 

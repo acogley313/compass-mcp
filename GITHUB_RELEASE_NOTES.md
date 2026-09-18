@@ -22,19 +22,21 @@ This document explains how to create and publish a release for Compass MCP on Gi
 
 ## Creating the Release Zip
 
+The release script creates a **flat zip structure** (no root folder) so users can extract directly into their existing `compass-mcp` folder.
+
 ### On macOS/Linux:
 ```bash
 bash build-release.sh 2.0.0
 ```
 
-This creates `dist/compass-mcp-2.0.0.zip` in the `dist/` folder.
+This creates `dist/compass-mcp-2.0.0.zip` (201 KB, flat structure).
 
 ### On Windows:
 ```batch
 build-release.bat 2.0.0
 ```
 
-This creates `dist\compass-mcp-2.0.0.zip` in the `dist\` folder.
+This creates `dist\compass-mcp-2.0.0.zip` (flat structure).
 
 **Note:** Requires 7-Zip or PowerShell. If using PowerShell:
 ```powershell

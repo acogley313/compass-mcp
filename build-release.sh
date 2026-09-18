@@ -1,7 +1,13 @@
 #!/bin/bash
-# Create a release zip file, excluding credentials and build artifacts
-# Usage: bash release.sh [version]
-# Example: bash release.sh 2.0.0
+# Create a release zip file (flat structure), excluding credentials and build artifacts
+# Usage: bash build-release.sh [version]
+# Example: bash build-release.sh 2.0.0
+#
+# Creates a flat zip structure for easy unzipping directly into existing installation:
+#   server.py
+#   compass_client.py
+#   exporter.py
+#   [etc - no root folder]
 
 set -e
 
@@ -20,48 +26,19 @@ NC='\033[0m' # No Color
 
 echo -e "${BLUE}Building release: $RELEASE_NAME${NC}"
 
-# Create a temporary directory for the release
-TEMP_DIR=$(mktemp -d)
-RELEASE_DIR="${TEMP_DIR}/${RELEASE_NAME}"
-mkdir -p "$RELEASE_DIR"
-
-# Copy files, excluding credentials and build artifacts
-echo "Copying files..."
-rsync -a \
-  --exclude='.git' \
-  --exclude='.gitignore' \
-  --exclude='.venv' \
-  --exclude='*.ionapi' \
-  --exclude='*.pyc' \
-  --exclude='__pycache__' \
-  --exclude='.DS_Store' \
-  --exclude='*.egg-info' \
-  --exclude='dist/' \
-  --exclude='dist' \
-  --exclude='build' \
-  --exclude='.idea' \
-  --exclude='*.iml' \
-  --exclude='*.zip' \
-  --exclude='.claude/settings.local.json' \
-  . "$RELEASE_DIR/"
-
-# Create the zip file
-echo "Creating zip archive..."
-ORIGINAL_DIR=$(pwd)
-cd "$TEMP_DIR"
-zip -r -q "$RELEASE_ZIP" "$RELEASE_NAME"
-
-# Move to dist folder
-mv "$TEMP_DIR/$RELEASE_ZIP" "$ORIGINAL_DIR/$DIST_DIR/$RELEASE_ZIP"
-
-# Cleanup
-rm -rf "$TEMP_DIR"
+# Create zip with flat structure (no root folder)
+echo "Creating zip archive (flat structure)..."
+# Use git archive to respect .gitignore, then add it to dist folder
+git archive --format=zip --output="$DIST_DIR/$RELEASE_ZIP" HEAD
 
 # Report
 echo -e "${GREEN}✓ Release created: $DIST_DIR/$RELEASE_ZIP${NC}"
-ls -lh "$ORIGINAL_DIR/$DIST_DIR/$RELEASE_ZIP"
+ls -lh "$DIST_DIR/$RELEASE_ZIP"
 echo ""
 echo "Next steps:"
 echo "  1. Review the zip file: $DIST_DIR/$RELEASE_ZIP"
 echo "  2. Create a GitHub Release and upload the zip"
 echo "  3. Share the download link with users"
+echo ""
+echo "Users can extract with:"
+echo "  unzip $RELEASE_ZIP -d ~/compass-mcp"
