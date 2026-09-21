@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from compass_client import CompassClient, DEFAULT_PAGE_SIZE, get_client
+from compass_client import CompassClient, DEFAULT_PAGE_SIZE, get_client, get_client_for_env
 from excel_writer import SplitXlsxWriter
 
 PREVIEW_ROWS = 50
@@ -19,15 +19,32 @@ class CompassExporter:
     """One instance per app session. Holds a lazily-created CompassClient and
     tracks the currently running export so it can be cancelled."""
 
-    def __init__(self):
+    def __init__(
+        self,
+        env_var: str = "IONAPI_FILE",
+        default_name: str = "credentials.ionapi",
+        base_url_env: str = "COMPASS_BASE_URL",
+    ):
         self._client: CompassClient | None = None
         self._client_lock = threading.Lock()
         self._cancel_event = threading.Event()
+        self._env_var = env_var
+        self._default_name = default_name
+        self._base_url_env = base_url_env
 
     def _get_client(self) -> CompassClient:
         with self._client_lock:
             if self._client is None:
-                self._client = get_client()
+                if self._env_var == "IONAPI_FILE" and self._default_name == "credentials.ionapi" and self._base_url_env == "COMPASS_BASE_URL":
+                    # Use the simpler factory for production (default) case
+                    self._client = get_client()
+                else:
+                    # Use environment-specific factory for TRN and other envs
+                    self._client = get_client_for_env(
+                        env_var=self._env_var,
+                        default_name=self._default_name,
+                        base_url_env=self._base_url_env,
+                    )
             return self._client
 
     def cancel(self):

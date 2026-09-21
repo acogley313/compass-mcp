@@ -6,3 +6,11 @@
 .venv/
 __pycache__/
 *.pyc
+
+# IDEs
+.idea/
+*.iml
+
+# Distribution
+dist/
+*.zip
