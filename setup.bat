@@ -12,8 +12,12 @@ REM produce a baffling, action-at-a-distance ") was unexpected at this time"
 REM error somewhere later in the script. PowerShell has no such landmine.
 echo Checking for Python 3.10+ ...
 set "PY="
-for /f "usebackq delims=" %%P in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0find_python.ps1"`) do set "PY=%%P"
+REM Only accept a line that is an existing .exe - anything else PowerShell
+REM writes to stdout (a blank line, a policy banner, etc.) is ignored rather
+REM than being mistaken for the interpreter path.
+for /f "usebackq delims=" %%P in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0find_python.ps1"`) do if /i "%%~xP"==".exe" if exist "%%~fP" set "PY=%%~fP"
 if not defined PY (
+  echo ERROR: Could not locate a usable Python 3.10+ - see message above, if any.
   pause
   exit /b 1
 )

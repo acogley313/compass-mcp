@@ -42,8 +42,10 @@ function Get-VersionInfo([string]$path) {
 $candidates = New-Object System.Collections.Generic.List[string]
 
 foreach ($name in @("python", "py")) {
-    $cmd = Get-Command $name -ErrorAction SilentlyContinue
-    if ($cmd) { $candidates.Add($cmd.Source) }
+    # Get-Command can return several matches; add each one separately (adding
+    # the array directly would join the paths into one space-separated string).
+    Get-Command $name -CommandType Application -All -ErrorAction SilentlyContinue |
+        ForEach-Object { if ($_.Source) { $candidates.Add($_.Source) } }
 }
 
 $roots = New-Object System.Collections.Generic.List[string]
@@ -73,7 +75,9 @@ foreach ($path in $candidates) {
     $info = Get-VersionInfo $path
     if (-not $info) { continue }
     if (($info.Major -gt 3) -or ($info.Major -eq 3 -and $info.Minor -ge 10)) {
-        Write-Output $info.Path
+        # Write the bare path straight to stdout (no formatting, no extra lines)
+        # so the calling batch file's for /f captures exactly this.
+        [Console]::Out.WriteLine($info.Path.Trim())
         exit 0
     }
     if (-not $bestOld) { $bestOld = $info }
