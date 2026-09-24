@@ -92,14 +92,33 @@ def main() -> int:
 
     if not isinstance(data, dict):
         data = {}
-    data.setdefault("mcpServers", {})
-    data["mcpServers"]["compass"] = {
+    entry = {
         "command": venv_python(dest),
         "args": [os.path.join(dest, "server.py")],
     }
+    # Refuse to register paths that don't exist - Claude Desktop would only
+    # report a cryptic "spawn ... ENOENT" when it tries to start the server.
+    for path in [entry["command"]] + entry["args"]:
+        if not os.path.isfile(path):
+            print(f"   ERROR: {path} does not exist - not registering it.", file=sys.stderr)
+            return 1
+
+    data.setdefault("mcpServers", {})
+    data["mcpServers"]["compass"] = entry
 
     with open(cfg, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
+
+    # Read it back to confirm the entry actually landed in the file.
+    try:
+        with open(cfg, encoding="utf-8") as f:
+            written = json.load(f)
+    except Exception as e:
+        print(f"   ERROR: could not read back {cfg}: {e}", file=sys.stderr)
+        return 1
+    if written.get("mcpServers", {}).get("compass") != entry:
+        print(f"   ERROR: the 'compass' entry is missing from {cfg} after writing it.", file=sys.stderr)
+        return 1
 
     print("   config updated:", cfg)
     return 0

@@ -14,7 +14,10 @@ to their own Infor tenant can use this as-is.
 ## Prerequisites
 
 - **Python 3.10+** — [python.org/downloads](https://www.python.org/downloads/)
-  (Windows: tick **"Add Python to PATH"** during install)
+  (Windows: tick **"Add Python to PATH"** during install). On Windows you can
+  skip this: if `install.bat` doesn't find a usable Python, it offers to
+  install Python 3.13 for you. The Microsoft Store version of Python can't be
+  used — the installer will offer the python.org version instead.
 - **Claude Desktop**
 - **One or two `.ionapi` credentials files** from your Infor tenant:
   - `credentials.ionapi` — for production (required)
@@ -39,8 +42,14 @@ to their own Infor tenant can use this as-is.
    This copies the folder to your home directory, builds an isolated Python
    environment, verifies it can connect to Compass, and registers the server
    with Claude Desktop — all in one pass.
+
+   > **Windows:** use `install.bat`, not `setup.bat` — `setup.bat` only builds
+   > the Python environment and doesn't add Compass to Claude Desktop. The
+   > Windows installer also closes Claude Desktop while it works (so it can't
+   > overwrite the new config) and reopens it at the end.
 4. **Fully quit and reopen Claude Desktop** (not just close the window —
-   quit it completely so it reloads its MCP server list).
+   quit it completely so it reloads its MCP server list). On Windows the
+   installer does this for you.
 5. (Optional but recommended) Set up a Claude Project to manage environment selection:
    - Create a new Claude Project
    - Add the contents of `claude_project_instructions.md` to your Project Instructions
@@ -110,7 +119,10 @@ The environment management file is recommended. The query optimization files are
 | `excel_writer.py` | Streaming, auto-splitting `.xlsx` writer used by `exporter.py` |
 | `install.command` / `install.bat` | One-click installer (recommended — see Quick start) |
 | `setup.sh` / `setup.bat` | Builds the venv in place, without touching Claude Desktop's config (see Manual setup) |
-| `find_python.ps1` | Windows-only: locates a usable Python 3.10+ interpreter for `install.bat`/`setup.bat` |
+| `_get_python.bat` | Windows-only: shared Python step for `install.bat`/`setup.bat` — finds Python, or offers to install it |
+| `find_python.ps1` | Windows-only: locates a usable Python 3.10+ interpreter (skips the Microsoft Store build) |
+| `install_python.ps1` | Windows-only: installs Python 3.13 for the current user (winget, or the python.org installer as a fallback) |
+| `claude_desktop.ps1` | Windows-only: closes / restarts Claude Desktop during install (never touches the Claude Code CLI) |
 | `_register_claude.py` | Registers/updates the `compass` entry in Claude Desktop's config; used by the installers |
 | `requirements.txt` | Python dependencies |
 | `.env.example` | Optional configuration overrides (none required) — documents both production and TRN env vars |
@@ -139,6 +151,7 @@ If you'd rather not run the one-click installer, you can do it by hand:
    cd compass-mcp
    setup.bat
    ```
+   (Answer **N** when it asks whether to run `install.bat` instead.)
 
    This creates a `.venv`, installs dependencies, and runs a live self-test
    that authenticates and pings Compass. You should see:
@@ -257,9 +270,10 @@ Claude config's `env` block if needed, e.g. a longer timeout for big queries:
 
 | Symptom | Fix |
 |---------|-----|
-| Tools don't appear in Claude | Fully quit & reopen Claude Desktop; check the config JSON is valid and paths are absolute. |
-| Windows: "python is not recognized" | Install Python from python.org and tick "Add Python to PATH", then try again. |
-| Windows: installer says the `python` shortcut just opens the Microsoft Store | A real Python isn't installed — only the Store's app-execution alias is on PATH. Install Python from python.org (ticking "Add Python to PATH"), or disable the alias under Settings → Apps → Advanced app settings → App execution aliases. |
+| Tools don't appear in Claude | Fully quit & reopen Claude Desktop; check the config JSON is valid and paths are absolute. Open it from Claude Desktop's **Settings → Developer → Edit Config** to be sure you're editing the file it actually reads. |
+| Windows: Settings → Developer shows `compass` **Failed** with `spawn ... ENOENT` | The `command` path in the config doesn't exist — usually because the venv was built somewhere else (e.g. `setup.bat` run in Downloads). Run `install.bat`, which builds it in `%USERPROFILE%\compass-mcp` and registers that path. |
+| Windows: "python is not recognized" / Python not found | Run `install.bat` and answer **Y** when it offers to install Python. Or install Python from python.org yourself (tick "Add Python to PATH") and try again. |
+| Windows: installer says only the Microsoft Store version of Python is installed | The Store build can't be used here. Let the installer install the python.org version (it can sit alongside the Store one), or install it yourself with `winget install --id Python.Python.3.13 -e --source winget --scope user`. |
 | `OAuth token request failed` | Credentials expired/revoked. Re-download the `.ionapi` from the Infor ION API portal and replace `credentials.ionapi`. |
 | `No .ionapi file found` | Ensure `credentials.ionapi` sits next to `server.py`, or set `IONAPI_FILE`. |
 | Query `timeout` | Increase `COMPASS_POLL_TIMEOUT`. |

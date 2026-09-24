@@ -1,23 +1,26 @@
 @echo off
-REM Sets up (or rebuilds) the Python virtual environment for the Compass MCP server.
-REM Run this once after copying the folder to a Windows machine (double-click or run in cmd).
+REM Sets up (or rebuilds) the Python virtual environment for the Compass MCP server
+REM IN THIS FOLDER, without copying anything or touching Claude Desktop's config.
+REM For a normal install, use install.bat instead - this is for manual setups
+REM (see "Manual setup" in README.md) and for rebuilding a venv in place.
 setlocal EnableExtensions
 cd /d "%~dp0"
 
-REM Detection lives in find_python.ps1, not here. Batch's multi-line ( ) block
-REM parser expands %VAR% inline while scanning for the block's closing paren,
-REM so a variable whose *value* contains literal parentheses (e.g.
-REM %ProgramFiles(x86)% -> "C:\Program Files (x86)") can corrupt that scan and
-REM produce a baffling, action-at-a-distance ") was unexpected at this time"
-REM error somewhere later in the script. PowerShell has no such landmine.
+echo.
+echo   This is the MANUAL setup script. It only builds the Python environment
+echo   in this folder - it does NOT install Compass into Claude Desktop.
+echo   For a normal install, use install.bat instead.
+echo.
+choice /c YN /m "  Run install.bat instead (recommended)"
+if errorlevel 2 goto manual
+call "%~dp0install.bat"
+exit /b
+
+:manual
+echo.
 echo Checking for Python 3.10+ ...
-set "PY="
-REM Only accept a line that is an existing .exe - anything else PowerShell
-REM writes to stdout (a blank line, a policy banner, etc.) is ignored rather
-REM than being mistaken for the interpreter path.
-for /f "usebackq delims=" %%P in (`powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0find_python.ps1"`) do if /i "%%~xP"==".exe" if exist "%%~fP" set "PY=%%~fP"
+call "%~dp0_get_python.bat"
 if not defined PY (
-  echo ERROR: Could not locate a usable Python 3.10+ - see message above, if any.
   pause
   exit /b 1
 )
@@ -47,7 +50,8 @@ echo Done. Verifying connectivity to Compass ...
 .venv\Scripts\python.exe server.py --selftest
 
 echo.
-echo Setup complete. Python interpreter for your Claude config:
+echo Python environment ready. Claude Desktop has NOT been configured - add this
+echo interpreter to claude_desktop_config.json yourself ^(see README.md^):
 echo   %CD%\.venv\Scripts\python.exe
 echo.
 echo (In claude_desktop_config.json, use DOUBLE backslashes in the path, e.g.

@@ -1,22 +1,25 @@
 # Locates a usable Python 3.10+ interpreter and prints its full path to
-# stdout. Used by install.bat / setup.bat instead of batch-native detection,
-# because batch's multi-line ( ) block parser corrupts itself when a
-# referenced variable's *value* contains literal parentheses (e.g.
-# %ProgramFiles(x86)% expands to "C:\Program Files (x86)") - PowerShell has
-# no such landmine, so this does the same job without it.
+# stdout. Used by _get_python.bat (shared by install.bat / setup.bat) instead
+# of batch-native detection, because batch's multi-line ( ) block parser
+# corrupts itself when a referenced variable's *value* contains literal
+# parentheses (e.g. %ProgramFiles(x86)% expands to "C:\Program Files (x86)") -
+# PowerShell has no such landmine, so this does the same job without it.
 #
-# Handles two Windows-specific gotchas along the way:
-#   - Skips the Microsoft Store "app execution alias" stub for python.exe/py
-#     (it's a real file on PATH, but running it just prompts to install from
-#     the Store instead of running Python).
+# Handles these Windows-specific gotchas along the way:
+#   - Skips the Microsoft Store "app execution alias" stubs for python.exe/py
+#     (real files on PATH, but they either prompt to install from the Store or
+#     launch a sandboxed Store Python that can't be relied on from Claude
+#     Desktop). Store-only Python is reported as such, so the caller can offer
+#     to install the regular python.org build instead.
 #   - Falls back to the standard python.org install locations by full path
-#     if nothing usable is on PATH yet, since a process launched by
-#     double-clicking a .bat file can still be running with a stale PATH
-#     right after installing Python, until you log off/on or reboot.
+#     (including the newer "Python install manager" runtime folder) if nothing
+#     usable is on PATH yet, since a process launched by double-clicking a .bat
+#     file can still be running with a stale PATH right after installing
+#     Python, until you log off/on or reboot.
 #
 # On success: prints the interpreter path and exits 0.
-# On failure: prints a diagnostic explaining what (if anything) was found,
-# to stderr, and exits 1.
+# On failure: prints a short explanation to stderr and exits 1. The caller
+# offers to install Python, so this doesn't give install instructions itself.
 
 $ErrorActionPreference = "Stop"
 
@@ -39,6 +42,11 @@ function Get-VersionInfo([string]$path) {
     }
 }
 
+function Fail([string]$message) {
+    [Console]::Error.WriteLine("  " + $message)
+    exit 1
+}
+
 $candidates = New-Object System.Collections.Generic.List[string]
 
 foreach ($name in @("python", "py")) {
@@ -49,14 +57,20 @@ foreach ($name in @("python", "py")) {
 }
 
 $roots = New-Object System.Collections.Generic.List[string]
-if ($env:LOCALAPPDATA) { $roots.Add((Join-Path $env:LOCALAPPDATA "Programs\Python")) }
+if ($env:LOCALAPPDATA) {
+    $roots.Add((Join-Path $env:LOCALAPPDATA "Programs\Python"))
+    # Where the python.org "Python install manager" puts runtimes, e.g.
+    # %LOCALAPPDATA%\Python\pythoncore-3.14-64\python.exe
+    $roots.Add((Join-Path $env:LOCALAPPDATA "Python"))
+}
 if ($env:ProgramFiles) { $roots.Add($env:ProgramFiles) }
 $pf86 = [Environment]::GetEnvironmentVariable("ProgramFiles(x86)")
 if ($pf86) { $roots.Add($pf86) }
 
 foreach ($root in $roots) {
     if (Test-Path -LiteralPath $root) {
-        Get-ChildItem -LiteralPath $root -Directory -Filter "Python3*" -ErrorAction SilentlyContinue |
+        Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like "Python3*" -or $_.Name -like "pythoncore-3*" } |
             Sort-Object Name -Descending |
             ForEach-Object { $candidates.Add((Join-Path $_.FullName "python.exe")) }
     }
@@ -84,30 +98,19 @@ foreach ($path in $candidates) {
 }
 
 if ($bestOld) {
-    Write-Error "Found $($bestOld.Text) at $($bestOld.Path), which is older than the required 3.10+. Install a newer version from https://www.python.org/downloads/ then run this again."
-    exit 1
+    Fail "Found $($bestOld.Text) at $($bestOld.Path), which is older than the required 3.10+."
 }
 
-if ($sawStoreAlias) {
-    Write-Error @"
-Windows has a "python"/"py" shortcut on PATH, but no real Python is
-installed - it just opens the Microsoft Store. Fix either way:
-  1) Install Python from https://www.python.org/downloads/ and tick
-     "Add Python to PATH", then run this again. OR
-  2) Go to Settings -> Apps -> Advanced app settings -> App execution
-     aliases, turn OFF "python.exe" / "python3.exe", then install
-     Python from the link above and run this again.
-"@
-    exit 1
+# The aliases may have been switched off (so nothing showed up on PATH), but
+# Store Python can still be installed - check for the package itself.
+$storePython = $null
+try {
+    $storePython = Get-AppxPackage -Name "PythonSoftwareFoundation.Python.3*" -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+} catch { }
+
+if ($storePython -or $sawStoreAlias) {
+    Fail "Only the Microsoft Store version of Python is installed. It can't be used here - the regular python.org version is needed (it can sit alongside the Store one)."
 }
 
-Write-Error @"
-Python is not installed or not on PATH.
-Install it from https://www.python.org/downloads/ and tick "Add Python
-to PATH" during setup, then run this again.
-
-If you just installed Python and this still fails, log off and back on
-(or restart the computer), then run this again - Windows needs a fresh
-session to pick up some installs.
-"@
-exit 1
+Fail "Python 3.10+ was not found on this computer."

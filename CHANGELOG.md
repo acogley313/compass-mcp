@@ -2,6 +2,26 @@
 
 All notable changes to Compass MCP are documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- **Windows installer on machines with the Microsoft Store Python** — `install.bat` no
+  longer dead-ends with "Python not found". It now offers to install Python 3.13 for the
+  current user (winget, falling back to the python.org installer), and also finds the
+  newer python.org "Python install manager" runtimes.
+- **`" "` is not recognized / Could not create venv** — stray non-path output from
+  `find_python.ps1` was being used as the Python path.
+- **`install.bat` quitting right after installing dependencies** — an unescaped `)` in an
+  error message ended its `if` block early, so the `pause`/`exit` after it always ran.
+- **Compass missing from Claude Desktop after a "successful" install** — the installer now
+  force-closes Claude Desktop before rebuilding the venv and editing its config (so Claude
+  can't overwrite the change or hold the old venv open), verifies the entry was written,
+  refuses to register paths that don't exist, and reopens Claude Desktop at the end.
+
+### Changed
+- `setup.bat` now explains that it doesn't configure Claude Desktop and offers to run
+  `install.bat` instead.
+
 ## [2.0.0] - 2026-09-18
 
 ### Added
