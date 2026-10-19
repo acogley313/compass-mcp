@@ -11,6 +11,10 @@ All notable changes to Compass MCP are documented in this file.
   every column comes back, and it pages automatically. Uses the existing production /
   training `.ionapi` credentials, plus a per-person `CSD_OPERATOR_INIT` (training can
   override with `CSD_OPERATOR_INIT_TRN`). The installers now offer to set it.
+- **`export_csd_to_excel` / `export_csd_to_excel_trn`** — the Excel export for the fetch tools:
+  stream a whole live CSD table (or a `where` slice) into auto-splitting `.xlsx` files in
+  Downloads, e.g. all ICSW items without a SAAMM extract. Writes every column; defaults to
+  100,000 rows per file since the files are wide.
 
 ### Fixed
 - **Settings not landing when Claude Desktop has more than one config file** (e.g. both the

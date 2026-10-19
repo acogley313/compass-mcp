@@ -17,12 +17,14 @@ Tools exposed:
     - ping_compass():                  check Compass connectivity
     - export_compass_to_excel(sql):    export full result set to Excel
     - fetch_csd(table, where):         read live CSD directly (bypasses the Compass replica)
+    - export_csd_to_excel(table, where): export a full live CSD table/filter to Excel
 
   Training (credentials_trn.ionapi / IONAPI_FILE_TRN):
     - query_compass_trn(sql):          same as query_compass but against TRN
     - ping_compass_trn():              check TRN Compass connectivity
     - export_compass_to_excel_trn(sql): same as export_compass_to_excel but against TRN
     - fetch_csd_trn(table, where):     same as fetch_csd but against TRN
+    - export_csd_to_excel_trn(table, where): same as export_csd_to_excel but against TRN
 
 The actual HTTP/auth logic lives in compass_client.py, shared with the desktop
 query app in app/.
@@ -40,6 +42,7 @@ from mcp.server.fastmcp import FastMCP
 
 from compass_client import CompassClient, get_client, get_client_for_env
 from exporter import CompassExporter
+from exporter import export_csd_to_excel as _write_csd_excel
 
 # Default row cap so responses stay manageable. Override with COMPASS_MAX_ROWS.
 DEFAULT_MAX_ROWS = int(os.environ.get("COMPASS_MAX_ROWS", "1000"))
@@ -137,8 +140,8 @@ def _get_client_trn() -> CompassClient:
     return _compass_trn
 
 
-def _fetch_csd(trn: bool, table: str, where: str, max_rows: int) -> dict[str, Any]:
-    """Shared body of fetch_csd / fetch_csd_trn.
+def _csd_config(trn: bool) -> tuple[str, int] | dict[str, Any]:
+    """(operator, company_number) for FetchWhere, or an error dict if unset.
 
     The operator init is per-person and has no default. TRN looks for
     CSD_OPERATOR_INIT_TRN / CSD_COMPANY_NUMBER_TRN first and falls back to the
@@ -157,6 +160,15 @@ def _fetch_csd(trn: bool, table: str, where: str, max_rows: int) -> dict[str, An
             ),
         }
     company = int(os.environ.get(f"CSD_COMPANY_NUMBER{suffix}") or os.environ.get("CSD_COMPANY_NUMBER") or "1")
+    return operator, company
+
+
+def _fetch_csd(trn: bool, table: str, where: str, max_rows: int) -> dict[str, Any]:
+    """Shared body of fetch_csd / fetch_csd_trn."""
+    cfg = _csd_config(trn)
+    if isinstance(cfg, dict):
+        return cfg
+    operator, company = cfg
     try:
         client = _get_client_trn() if trn else _get_client_prod()
         all_rows: list[dict[str, Any]] = []
@@ -182,6 +194,30 @@ def _fetch_csd(trn: bool, table: str, where: str, max_rows: int) -> dict[str, An
         }
     except Exception as e:
         return {"error": "fetch_failed", "message": str(e)}
+
+
+def _export_csd(
+    trn: bool, table: str, where: str, filename: str, rows_per_file: int
+) -> dict[str, Any]:
+    """Shared body of export_csd_to_excel / export_csd_to_excel_trn."""
+    cfg = _csd_config(trn)
+    if isinstance(cfg, dict):
+        return cfg
+    operator, company = cfg
+    try:
+        client = _get_client_trn() if trn else _get_client_prod()
+        return _write_csd_excel(
+            client,
+            table,
+            where,
+            operator,
+            company,
+            output_dir=Path.home() / "Downloads",
+            base_filename=filename or f"csd_{table.lower()}",
+            rows_per_file=max(1000, int(rows_per_file or 100_000)),
+        )
+    except Exception as e:
+        return {"error": "export_failed", "message": str(e)}
 
 
 def _get_exporter_prod() -> CompassExporter:
@@ -264,12 +300,58 @@ def fetch_csd(table: str, where: str = "", max_rows: int = DEFAULT_MAX_ROWS) -> 
             fetched from CSD until this many rows are collected or the table
             is exhausted.
 
+    If the response comes back with `truncated: true`, or the user wants a whole
+    table, use `export_csd_to_excel` instead of raising max_rows.
+
     Returns:
         A dict with `columns` (list of column names) and `rows` (list of row
         value lists), plus `row_count` and `truncated`. On failure, returns a
         dict with an `error` message.
     """
     return _fetch_csd(False, table, where, max_rows)
+
+
+@mcp.tool()
+def export_csd_to_excel(
+    table: str,
+    where: str = "",
+    filename: str = "",
+    rows_per_file: int = 100_000,
+) -> dict[str, Any]:
+    """Export a full table (or WHERE-filtered slice) of the live PRODUCTION CSD/SX.e
+    database to one or more .xlsx files in the user's Downloads folder,
+    instead of returning rows in chat.
+
+    This is the Excel export for `fetch_csd`: use it instead of `fetch_csd` when the
+    result is too big for chat — after `fetch_csd` reports `truncated: true`, or up
+    front when the user wants a whole table (e.g. "all ICSW items") or any
+    large pull. Like `fetch_csd` it reads CSD directly (no datalake replica),
+    takes a table name plus an optional WHERE clause (double-quoted string
+    literals, e.g. `whse = "TN01"`), and always writes EVERY column of the
+    table — no SQL, joins, or column selection. Rows stream to disk page by
+    page, so very large tables are fine, but they take time (roughly 900
+    rows/s on a wide table like ICSW; a few hundred thousand rows is several
+    minutes) — that's expected, not a hang. If a pull is huge, filter it with
+    `where` (e.g. one warehouse or vendor at a time) and export in pieces.
+    Files auto-split every `rows_per_file` rows.
+
+    Args:
+        table: CSD table name (e.g. "icsw", "arsc", "pdsc"). Case-insensitive.
+        where: Optional WHERE clause with no "WHERE" keyword, e.g.
+            'cono = 1 and statustype <> "I"'. Leave blank for every row.
+        filename: Base file name, no extension (default "csd_<table>"). Saved
+            as `<filename>.xlsx`, or `<filename>_part1.xlsx`,
+            `<filename>_part2.xlsx`, ... if the result spans several files.
+        rows_per_file: Max data rows per file (default 100,000 — lower than
+            the Compass export because every column comes back, so files
+            get wide).
+
+    Returns:
+        A dict with `files` (absolute paths written to Downloads),
+        `row_count`, `column_count` and `elapsed_sec`. On failure, returns a
+        dict with an `error` message; anything already written is kept.
+    """
+    return _export_csd(False, table, where, filename, rows_per_file)
 
 
 @mcp.tool()
@@ -446,11 +528,57 @@ def fetch_csd_trn(table: str, where: str = "", max_rows: int = DEFAULT_MAX_ROWS)
             'cono = 1 and whse = "TN01"'. Leave blank to return every row.
         max_rows: Maximum number of rows to return (default 1000).
 
+    If the response comes back with `truncated: true`, or the user wants a whole
+    table, use `export_csd_to_excel_trn` instead of raising max_rows.
+
     Returns:
         A dict with `columns`, `rows`, `row_count` and `truncated`. On
         failure, returns a dict with an `error` message.
     """
     return _fetch_csd(True, table, where, max_rows)
+
+
+@mcp.tool()
+def export_csd_to_excel_trn(
+    table: str,
+    where: str = "",
+    filename: str = "",
+    rows_per_file: int = 100_000,
+) -> dict[str, Any]:
+    """Export a full table (or WHERE-filtered slice) of the live TRAINING (TRN) CSD/SX.e
+    database to one or more .xlsx files in the user's Downloads folder,
+    instead of returning rows in chat.
+
+    This is the Excel export for `fetch_csd_trn`: use it instead of `fetch_csd_trn` when the
+    result is too big for chat — after `fetch_csd_trn` reports `truncated: true`, or up
+    front when the user wants a whole table (e.g. "all ICSW items") or any
+    large pull. Like `fetch_csd_trn` it reads CSD directly (no datalake replica),
+    takes a table name plus an optional WHERE clause (double-quoted string
+    literals, e.g. `whse = "TN01"`), and always writes EVERY column of the
+    table — no SQL, joins, or column selection. Rows stream to disk page by
+    page, so very large tables are fine, but they take time (roughly 900
+    rows/s on a wide table like ICSW; a few hundred thousand rows is several
+    minutes) — that's expected, not a hang. If a pull is huge, filter it with
+    `where` (e.g. one warehouse or vendor at a time) and export in pieces.
+    Files auto-split every `rows_per_file` rows.
+
+    Args:
+        table: CSD table name (e.g. "icsw", "arsc", "pdsc"). Case-insensitive.
+        where: Optional WHERE clause with no "WHERE" keyword, e.g.
+            'cono = 1 and statustype <> "I"'. Leave blank for every row.
+        filename: Base file name, no extension (default "csd_<table>"). Saved
+            as `<filename>.xlsx`, or `<filename>_part1.xlsx`,
+            `<filename>_part2.xlsx`, ... if the result spans several files.
+        rows_per_file: Max data rows per file (default 100,000 — lower than
+            the Compass export because every column comes back, so files
+            get wide).
+
+    Returns:
+        A dict with `files` (absolute paths written to Downloads),
+        `row_count`, `column_count` and `elapsed_sec`. On failure, returns a
+        dict with an `error` message; anything already written is kept.
+    """
+    return _export_csd(True, table, where, filename, rows_per_file)
 
 
 if __name__ == "__main__":

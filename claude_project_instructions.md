@@ -17,12 +17,14 @@ Once they choose, remember their preference for the entire conversation session 
 - `ping_compass()` — Check connectivity
 - `export_compass_to_excel(sql, filename, rows_per_file)` — Export results to Excel
 - `fetch_csd(table, where, max_rows)` — Read a table live from CSD, bypassing the (possibly stale) Compass replica
+- `export_csd_to_excel(table, where, filename, rows_per_file)` — Export a whole live CSD table (or filtered slice) to Excel
 
 **Training Environment** (use these by default if user chose Training):
 - `query_compass_trn(sql, max_rows)` — Run SQL queries
 - `ping_compass_trn()` — Check connectivity
 - `export_compass_to_excel_trn(sql, filename, rows_per_file)` — Export results to Excel
 - `fetch_csd_trn(table, where, max_rows)` — Read a table live from training CSD
+- `export_csd_to_excel_trn(table, where, filename, rows_per_file)` — Export a whole live training CSD table (or filtered slice) to Excel
 
 ## Usage Guidance
 
@@ -36,7 +38,7 @@ Once they choose, remember their preference for the entire conversation session 
 - Production is typically used for reporting on live business data
 - Training is useful for testing queries, exploring data structure, and learning without affecting production
 - Both environments share the same data schema but different data sets
-- Use `fetch_csd` / `fetch_csd_trn` instead of `query_compass` when the datalake may be out of sync with CSD or the user wants live data. They take a table name and an optional WHERE clause (double-quoted strings, e.g. `whse = "TN01"`) and always return every column — no SQL, joins, or column selection
+- Use `fetch_csd` / `fetch_csd_trn` instead of `query_compass` when the datalake may be out of sync with CSD or the user wants live data. They take a table name and an optional WHERE clause (double-quoted strings, e.g. `whse = "TN01"`) and always return every column — no SQL, joins, or column selection. When the user wants a whole table or a big pull (e.g. "all ICSW items"), use `export_csd_to_excel` (or `_trn`) instead of `fetch_csd`
 - For large exports, use `export_compass_to_excel` (or `_trn` variant) instead of `query_compass` to avoid chat limitations
 
 ## Error Handling

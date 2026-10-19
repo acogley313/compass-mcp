@@ -1,5 +1,6 @@
 """Orchestrates a Compass query end-to-end: submit, poll, paginate, write to
 Excel, and report progress. Used by server.py's export_compass_to_excel tool.
+Also holds export_csd_to_excel, the same idea for live CSD FetchWhere reads.
 """
 
 from __future__ import annotations
@@ -13,6 +14,10 @@ from compass_client import CompassClient, DEFAULT_PAGE_SIZE, get_client, get_cli
 from excel_writer import SplitXlsxWriter
 
 PREVIEW_ROWS = 50
+
+# FetchWhere throughput is server-bound (~1-1.5k rows/s); this page size is big
+# enough to amortise the per-request overhead without huge response bodies.
+CSD_EXPORT_BATCH_SIZE = 2000
 
 
 class CompassExporter:
@@ -167,3 +172,44 @@ def _rows_to_values(page: list[Any], columns: list[str]) -> list[list[Any]]:
         cols = columns or list(page[0].keys())
         return [[row.get(c) for c in cols] for row in page]
     return page
+
+
+def export_csd_to_excel(
+    client: CompassClient,
+    table: str,
+    where_clause: str,
+    operator: str,
+    company_number: int,
+    output_dir: Path,
+    base_filename: str,
+    rows_per_file: int,
+) -> dict[str, Any]:
+    """Page a full CSD FetchWhere result straight into one or more .xlsx files.
+
+    Rows are written as each page arrives, so nothing close to the whole table
+    is ever held in memory. If a page fails midway the files written so far are
+    closed and kept on disk, and the exception propagates.
+    """
+    t0 = time.time()
+    writer: SplitXlsxWriter | None = None
+    columns: list[str] = []
+    try:
+        for batch in client.iter_csd_fetch_where(
+            table,
+            where_clause,
+            operator,
+            company_number,
+            batch_size=CSD_EXPORT_BATCH_SIZE,
+        ):
+            if writer is None:
+                columns = list(batch[0].keys())
+                writer = SplitXlsxWriter(output_dir / base_filename, columns, rows_per_file)
+            writer.write_rows([[row.get(c) for c in columns] for row in batch])
+    finally:
+        files = writer.close() if writer is not None else []
+    return {
+        "row_count": writer.total_rows_written if writer is not None else 0,
+        "column_count": len(columns),
+        "files": [str(f) for f in files],
+        "elapsed_sec": round(time.time() - t0, 1),
+    }

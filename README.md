@@ -80,6 +80,13 @@ This server exposes tools for **two environments**: Production and Training (TRN
   (table name + optional WHERE clause, every column comes back), but faster
   and immune to datalake replication lag. See **Two ways to read CSD data**
   below. Requires the one-time `CSD_OPERATOR_INIT` setup described there.
+- **`export_csd_to_excel(table, where="", filename="", rows_per_file=100000)`**
+  — the Excel export for `fetch_csd`: stream a whole live CSD table (or a
+  `where`-filtered slice) into `.xlsx` files in your Downloads folder, e.g.
+  every ICSW item, without a SAAMM extract. Every column of the table is
+  written. Roughly 900 rows/s on wide tables, so a few hundred thousand rows
+  takes several minutes; for huge pulls, filter by warehouse or vendor and
+  export in pieces.
 - **`export_compass_to_excel(sql, filename="compass_export", rows_per_file=500000)`**
   — run a SQL query in full and stream every row straight into one or more
   `.xlsx` files in your Downloads folder, instead of returning rows in chat.
@@ -95,6 +102,7 @@ This server exposes tools for **two environments**: Production and Training (TRN
 - **`export_compass_to_excel_trn(sql, filename="compass_export", rows_per_file=500000)`** — same as `export_compass_to_excel` but against training
 - **`ping_compass_trn()`** — check training Compass connectivity/auth
 - **`fetch_csd_trn(table, where="", max_rows=1000)`** — same as `fetch_csd` but against live training CSD (uses `credentials_trn.ionapi`)
+- **`export_csd_to_excel_trn(table, where="", filename="", rows_per_file=100000)`** — same as `export_csd_to_excel` but against live training CSD
 
 ## Using this in a Claude Project
 
@@ -277,9 +285,9 @@ fully quit and reopen Claude Desktop. Since the server is already registered,
 you don't need to touch `claude_desktop_config.json` or re-run the installer
 — that step only happens once, the first time.
 
-> **Updating to pick up `fetch_csd` / `fetch_csd_trn` (CSD FetchWhere support):**
-> same drop-in replace as above — this release changes `server.py` and
-> `compass_client.py` (and `_register_claude.py` plus the installers if you
+> **Updating to pick up `fetch_csd` / `fetch_csd_trn` and the `export_csd_to_excel` tools (CSD FetchWhere support):**
+> same drop-in replace as above — this release changes `server.py`,
+> `compass_client.py` and `exporter.py` (and `_register_claude.py` plus the installers if you
 > re-run those). No new dependencies. Then set your `CSD_OPERATOR_INIT`, either
 > by re-running the installer (it prompts for it and updates your existing
 > config in place) or by adding it to the `env` block in
