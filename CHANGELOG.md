@@ -13,6 +13,10 @@ All notable changes to Compass MCP are documented in this file.
   override with `CSD_OPERATOR_INIT_TRN`). The installers now offer to set it.
 
 ### Fixed
+- **Settings not landing when Claude Desktop has more than one config file** (e.g. both the
+  classic `%APPDATA%` copy and a Store-packaged copy) — the registration script now updates
+  every Claude Desktop config that already exists instead of guessing which one the running
+  app reads, so a new `compass` entry or `CSD_OPERATOR_INIT` can't end up in the wrong file.
 - **Windows installer on machines with the Microsoft Store Python** — `install.bat` no
   longer dead-ends with "Python not found". It now offers to install Python 3.13 for the
   current user (winget, falling back to the python.org installer), and also finds the

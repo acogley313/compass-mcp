@@ -62,14 +62,41 @@ def venv_python(dest: str) -> str:
     return os.path.join(dest, ".venv", "bin", "python")
 
 
+def existing_config_paths() -> list[str]:
+    """Every Claude Desktop config file that already exists on this machine.
+
+    On Windows there is no reliable way to tell whether the running app reads
+    the classic %APPDATA% file or the Store-packaged copy (a machine can have
+    both, or switch between them across app updates), so register in all of
+    them rather than guess and silently update the wrong one.
+    """
+    candidates = []
+    if sys.platform == "win32":
+        localappdata = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
+        candidates += sorted(glob.glob(os.path.join(
+            localappdata, "Packages", "Claude*", "LocalCache", "Roaming",
+            "Claude", "claude_desktop_config.json",
+        )))
+        appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
+        candidates.append(os.path.join(appdata, "Claude", "claude_desktop_config.json"))
+    else:
+        candidates.append(config_path())
+    return [p for p in dict.fromkeys(candidates) if os.path.isfile(p)]
+
+
 def main() -> int:
     if len(sys.argv) < 2:
-        print("usage: python _register_claude.py <install_dir>", file=sys.stderr)
+        print("usage: python _register_claude.py <install_dir> [csd_operator_init]", file=sys.stderr)
         return 2
     dest = os.path.abspath(sys.argv[1])
     csd_operator_init = sys.argv[2].strip() if len(sys.argv) > 2 else ""
-    cfg = config_path()
+    status = 0
+    for cfg in existing_config_paths() or [config_path()]:
+        status = register(cfg, dest, csd_operator_init) or status
+    return status
 
+
+def register(cfg: str, dest: str, csd_operator_init: str) -> int:
     os.makedirs(os.path.dirname(cfg), exist_ok=True)
 
     data = {}
