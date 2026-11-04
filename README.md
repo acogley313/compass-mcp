@@ -240,12 +240,17 @@ If you'd rather not run the one-click installer, you can do it by hand:
 4. Open the Claude Desktop config file:
    - **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
    - **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
-   - **Windows, Microsoft Store build of Claude Desktop:** the Store version
-     is sandboxed and never sees `%APPDATA%\Claude` — its config instead lives
-     at `%LOCALAPPDATA%\Packages\Claude_<hash>\LocalCache\Roaming\Claude\claude_desktop_config.json`
-     (the `<hash>` suffix is publisher-specific; there's normally only one
-     `Claude_*` folder under `Packages`). `_register_claude.py` (used by the
-     installers) already detects this automatically.
+   - **Windows, Microsoft Store / MSIX build of Claude Desktop** (also what
+     WinGet and the current website installer deploy): the app is sandboxed
+     and has moved its config more than once. Depending on the version it
+     reads one of:
+     - `%LOCALAPPDATA%\Claude-Data\claude_<id>\claude_desktop_config.json` (current builds)
+     - `%LOCALAPPDATA%\Packages\Claude_<hash>\LocalCache\Roaming\Claude\claude_desktop_config.json` (older builds)
+
+     `_register_claude.py` (used by the installers) writes the `compass` entry
+     into every one of these that could apply, plus `%APPDATA%\Claude`, so you
+     don't need to work out which one your copy uses. Editing by hand? Use
+     **Settings → Developer → Edit Config** in the app, which opens the right file.
 
    (In Claude Desktop you can also reach it via **Settings → Developer → Edit Config**.)
 5. Add a `compass` entry (merge into existing `mcpServers` if present),

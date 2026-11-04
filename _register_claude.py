@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Register (or update) the 'compass' MCP server in the Claude Desktop config.
 
-OS-aware: picks the correct config location and venv interpreter path for the
-platform it runs on. Used by both install.command (macOS) and install.bat
-(Windows). Backs up any existing config first.
+OS-aware: picks the config location(s) and venv interpreter path for the
+platform it runs on - on Windows that's every location a Store/MSIX or classic
+Claude Desktop install might read (see windows_config_paths). Used by both
+install.command (macOS) and install.bat (Windows). Backs up any existing config
+first.
 
 Usage:  python _register_claude.py <install_dir> [csd_operator_init]
 """
@@ -14,46 +16,60 @@ import shutil
 import sys
 
 
-def config_path() -> str:
+CONFIG_NAME = "claude_desktop_config.json"
+
+
+def windows_config_paths() -> list[str]:
+    r"""Every place a Windows Claude Desktop install might read its config from.
+
+    There is no reliable way to tell from outside the app which one the running
+    copy uses - it has moved twice and differs by install type and version - so
+    the installer writes the 'compass' entry into all of them. Each file only
+    gains/updates its own 'compass' entry, so an unused copy is harmless.
+
+      1. %LOCALAPPDATA%\Claude-Data\claude_<id>\claude_desktop_config.json
+         Current Microsoft Store / MSIX builds (the WinGet and claude-setup.exe
+         installs are MSIX too). The app migrated its user data here and now
+         ignores the old packaged location below.
+      2. %LOCALAPPDATA%\Packages\Claude_<hash>\LocalCache\Roaming\Claude\...
+         Older MSIX builds: a packaged app's writes to %APPDATA% are virtualized
+         into this per-package folder.
+      3. %APPDATA%\Claude\claude_desktop_config.json
+         Classic (non-Store) installs. Always written: MSIX apps can also fall
+         back to reading the real %APPDATA% when they have no private copy.
+    """
+    localappdata = os.environ.get("LOCALAPPDATA") or os.path.join(
+        os.path.expanduser("~"), "AppData", "Local")
+    appdata = os.environ.get("APPDATA") or os.path.join(
+        os.path.expanduser("~"), "AppData", "Roaming")
+
+    paths = []
+    for d in sorted(glob.glob(os.path.join(localappdata, "Claude-Data", "claude_*"))):
+        if os.path.isdir(d):
+            paths.append(os.path.join(d, CONFIG_NAME))
+    for d in sorted(glob.glob(os.path.join(localappdata, "Packages", "Claude_*"))):
+        if os.path.isdir(d):
+            paths.append(os.path.join(d, "LocalCache", "Roaming", "Claude", CONFIG_NAME))
+    paths.append(os.path.join(appdata, "Claude", CONFIG_NAME))
+    # Windows paths are case-insensitive; drop duplicates that differ only by case.
+    seen, unique = set(), []
+    for p in paths:
+        key = os.path.normcase(os.path.normpath(p))
+        if key not in seen:
+            seen.add(key)
+            unique.append(p)
+    return unique
+
+
+def config_paths() -> list[str]:
     if sys.platform == "win32":
-        # Claude Desktop installed from the Microsoft Store runs as a packaged
-        # (MSIX) app, which sandboxes app data - it never sees %APPDATA%\Claude
-        # and instead reads/writes a virtualized copy under
-        # LocalAppData\Packages\<PackageFamilyName>\LocalCache\Roaming\Claude.
-        # The package family name has a publisher-specific hash suffix
-        # ("Claude_<hash>"), so glob for it rather than hardcoding it.
-        #
-        # Check this FIRST, ahead of the classic path: if this script (or an
-        # older version of it) already ran once on a Store-install machine, it
-        # would have created a file at the classic %APPDATA%\Claude location
-        # even though Claude Desktop never reads it - so "the classic file
-        # exists" is not reliable evidence that it's the real one in use.
-        localappdata = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
-        packaged_cfg = sorted(glob.glob(os.path.join(
-            localappdata, "Packages", "Claude*", "LocalCache", "Roaming",
-            "Claude", "claude_desktop_config.json",
-        )))
-        if packaged_cfg:
-            return packaged_cfg[0]
-
-        # No packaged config yet - if a Store-packaged install directory
-        # exists at all (even before Claude has been launched once), target
-        # the path it would use.
-        packaged_dirs = sorted(glob.glob(os.path.join(localappdata, "Packages", "Claude*")))
-        if packaged_dirs:
-            return os.path.join(
-                packaged_dirs[0], "LocalCache", "Roaming", "Claude", "claude_desktop_config.json"
-            )
-
-        # No Store-packaged install found at all - classic (non-Store) install.
-        appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
-        return os.path.join(appdata, "Claude", "claude_desktop_config.json")
+        return windows_config_paths()
     if sys.platform == "darwin":
-        return os.path.expanduser(
-            "~/Library/Application Support/Claude/claude_desktop_config.json"
-        )
+        return [os.path.expanduser(
+            "~/Library/Application Support/Claude/" + CONFIG_NAME
+        )]
     # Linux / other
-    return os.path.expanduser("~/.config/Claude/claude_desktop_config.json")
+    return [os.path.expanduser("~/.config/Claude/" + CONFIG_NAME)]
 
 
 def venv_python(dest: str) -> str:
@@ -62,38 +78,37 @@ def venv_python(dest: str) -> str:
     return os.path.join(dest, ".venv", "bin", "python")
 
 
-def existing_config_paths() -> list[str]:
-    """Every Claude Desktop config file that already exists on this machine.
-
-    On Windows there is no reliable way to tell whether the running app reads
-    the classic %APPDATA% file or the Store-packaged copy (a machine can have
-    both, or switch between them across app updates), so register in all of
-    them rather than guess and silently update the wrong one.
-    """
-    candidates = []
-    if sys.platform == "win32":
-        localappdata = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
-        candidates += sorted(glob.glob(os.path.join(
-            localappdata, "Packages", "Claude*", "LocalCache", "Roaming",
-            "Claude", "claude_desktop_config.json",
-        )))
-        appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
-        candidates.append(os.path.join(appdata, "Claude", "claude_desktop_config.json"))
-    else:
-        candidates.append(config_path())
-    return [p for p in dict.fromkeys(candidates) if os.path.isfile(p)]
-
-
 def main() -> int:
     if len(sys.argv) < 2:
         print("usage: python _register_claude.py <install_dir> [csd_operator_init]", file=sys.stderr)
         return 2
     dest = os.path.abspath(sys.argv[1])
     csd_operator_init = sys.argv[2].strip() if len(sys.argv) > 2 else ""
-    status = 0
-    for cfg in existing_config_paths() or [config_path()]:
-        status = register(cfg, dest, csd_operator_init) or status
-    return status
+
+    # Refuse to register paths that don't exist - Claude Desktop would only
+    # report a cryptic "spawn ... ENOENT" when it tries to start the server.
+    for path in (venv_python(dest), os.path.join(dest, "server.py")):
+        if not os.path.isfile(path):
+            print(f"   ERROR: {path} does not exist - not registering it.", file=sys.stderr)
+            return 1
+
+    targets = config_paths()
+    ok = 0
+    for cfg in targets:
+        try:
+            if register(cfg, dest, csd_operator_init) == 0:
+                ok += 1
+        except Exception as e:  # one unwritable location shouldn't stop the rest
+            print(f"   WARNING: could not update {cfg}: {e}", file=sys.stderr)
+
+    if ok == 0:
+        print("   ERROR: could not write any Claude Desktop config file.", file=sys.stderr)
+        return 1
+    if csd_operator_init:
+        print(f"   CSD_OPERATOR_INIT set to: {csd_operator_init}")
+    if ok < len(targets):
+        print(f"   ({ok} of {len(targets)} config locations updated - see warnings above)")
+    return 0
 
 
 def register(cfg: str, dest: str, csd_operator_init: str) -> int:
@@ -133,13 +148,6 @@ def register(cfg: str, dest: str, csd_operator_init: str) -> int:
     if env:
         entry["env"] = env
 
-    # Refuse to register paths that don't exist - Claude Desktop would only
-    # report a cryptic "spawn ... ENOENT" when it tries to start the server.
-    for path in [entry["command"]] + entry["args"]:
-        if not os.path.isfile(path):
-            print(f"   ERROR: {path} does not exist - not registering it.", file=sys.stderr)
-            return 1
-
     data["mcpServers"]["compass"] = entry
 
     with open(cfg, "w", encoding="utf-8") as f:
@@ -157,8 +165,6 @@ def register(cfg: str, dest: str, csd_operator_init: str) -> int:
         return 1
 
     print("   config updated:", cfg)
-    if csd_operator_init:
-        print(f"   CSD_OPERATOR_INIT set to: {csd_operator_init}")
     return 0
 
 

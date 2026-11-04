@@ -17,6 +17,12 @@ All notable changes to Compass MCP are documented in this file.
   100,000 rows per file since the files are wide.
 
 ### Fixed
+- **Windows: `compass` not showing up in Microsoft Store / MSIX Claude Desktop after install** —
+  current Store builds moved their config to `%LOCALAPPDATA%\Claude-Data\claude_<id>\` and
+  ignore the older `Packages\Claude_*\LocalCache` copy, so the installer was writing to a
+  file the app no longer reads. The registration script now writes the entry to every
+  location a Windows install might read (Claude-Data, the packaged LocalCache copy, and
+  `%APPDATA%\Claude`), creating the file where needed, and lists each one it updated.
 - **Settings not landing when Claude Desktop has more than one config file** (e.g. both the
   classic `%APPDATA%` copy and a Store-packaged copy) — the registration script now updates
   every Claude Desktop config that already exists instead of guessing which one the running
