@@ -228,6 +228,21 @@ def test_invalid_scope_error_is_readable(tmp_path):
     assert "client-secret" not in msg
 
 
+def test_invalid_scope_in_ions_real_response_shape(tmp_path):
+    # Captured from a live ION token endpoint: the scope failure arrives as
+    # error=invalid_grant with the real reason in error_description.
+    cfg = IonApiConfig.load(write(tmp_path, {**CC_FILE, "sc": ["Infor-DataFabric", "Bogus"]}))
+    resp = httpx.Response(400, json={
+        "error": "invalid_grant",
+        "error_trace_id": "Root=1-abc",
+        "error_description": "invalid_scope",
+    })
+    with pytest.raises(RuntimeError) as ei:
+        TokenManager(cfg).get_token(token_client(resp))
+    msg = str(ei.value)
+    assert "rejected the requested scope" in msg and "Infor-DataFabric Bogus" in msg
+
+
 def test_invalid_client_error_is_readable(tmp_path):
     cfg = IonApiConfig.load(write(tmp_path, CC_FILE))
     resp = httpx.Response(401, json={"error": "invalid_client"})

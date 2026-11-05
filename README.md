@@ -388,9 +388,13 @@ To ask for *fewer* scopes than the file lists (for testing, say), set
 space-separated list. Set it to an empty value to send no scope. It can narrow
 access but never widen it beyond the Authorized App's scopes.
 
-`ping_compass` and `python server.py --selftest` show the grant type and which
-scopes were requested and granted, and warn if ION granted fewer than requested.
-A rejected scope produces an `invalid_scope` error that names the scope.
+`ping_compass` and `python server.py --selftest` show the grant type and the
+scopes that were requested. (ION's token response doesn't currently echo back a
+granted scope, so `scope_granted` shows `null`; if it ever does, a warning
+appears when fewer scopes were granted than requested.) A scope the app doesn't
+allow produces a readable error that names the scope; a token issued without a
+required scope fails at call time with ION's
+`403 OAuth2 scopes access control violated`.
 
 A scope limits which *APIs* a token can call. It does not limit which Compass
 tables a query can read — use Data Fabric permissions on the Authorized App for

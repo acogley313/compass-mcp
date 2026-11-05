@@ -262,7 +262,11 @@ class TokenManager:
         except Exception:
             pass
         detail = resp.text[:500]
-        if code == "invalid_scope":
+        # ION reports a rejected scope as error="invalid_grant" with
+        # error_description="invalid_scope", not as error="invalid_scope", so
+        # look for the marker in both fields.
+        marker = f"{code or ''} {description or ''}".lower()
+        if "invalid_scope" in marker:
             return RuntimeError(
                 f"OAuth token request rejected the requested scope "
                 f"{' '.join(self.cfg.scopes) or '(none)'!r} (grant: {self.cfg.grant_type}). "
@@ -270,7 +274,7 @@ class TokenManager:
                 f".ionapi file and the app's scopes in ION API. "
                 f"Server said: {description or detail}"
             )
-        if code == "invalid_client":
+        if "invalid_client" in marker:
             return RuntimeError(
                 f"OAuth token request failed: invalid client credentials "
                 f"(grant: {self.cfg.grant_type}). The .ionapi 'ci'/'cs' may be revoked or "
