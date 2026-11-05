@@ -589,6 +589,11 @@ if __name__ == "__main__":
         print(f"Loading {label} credentials...", file=sys.stderr)
         c = _get_client_trn() if test_trn else _get_client_prod()
         print(f"Token URL:    {c.cfg.token_url}", file=sys.stderr)
+        print(f"Grant type:   {c.cfg.grant_type}", file=sys.stderr)
+        print(f"Scope:        {' '.join(c.cfg.scopes) or '(none sent)'}", file=sys.stderr)
+        if c.cfg.grant_type == "password":
+            print("Note:         password grant in use; client_credentials is recommended "
+                  "(see README: 'OAuth grant types and scopes').", file=sys.stderr)
         print(f"Compass base: {c.cfg.compass_base}", file=sys.stderr)
         print(f"Pinging {label} Compass...", file=sys.stderr)
         print(json.dumps(c.ping(), indent=2), file=sys.stderr)

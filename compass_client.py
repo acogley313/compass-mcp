@@ -5,7 +5,7 @@ Compass API client
 Shared connection layer for talking to Infor Compass (Data Fabric). Used by
 both the MCP server (server.py) and the desktop query app (app/).
 
-Handles ION API OAuth2 auth, submitting SQL jobs, polling for completion, and
+Handles ION API OAuth2 auth (password or client_credentials grant, optional scopes), submitting SQL jobs, polling for completion, and
 paginating through results.
 """
 
@@ -86,6 +86,66 @@ def find_ionapi_file(
     )
 
 
+GRANT_PASSWORD = "password"
+GRANT_CLIENT_CREDENTIALS = "client_credentials"
+SUPPORTED_GRANTS = (GRANT_PASSWORD, GRANT_CLIENT_CREDENTIALS)
+
+PASSWORD_GRANT_NOTICE = (
+    "Using the OAuth2 password grant. client_credentials is recommended: it needs no "
+    "service-account password and can be limited with enforced scopes. See "
+    "'OAuth grant types and scopes' in the README."
+)
+
+
+def parse_scopes(value: Any) -> list[str]:
+    """Normalize a scope value into a de-duplicated list of scope names.
+
+    The ``sc`` key in an .ionapi file is a JSON list (``["Infor-DataFabric"]``),
+    but env overrides and token responses are space-delimited strings
+    (RFC 6749). Accept either, plus None.
+    """
+    if value is None:
+        return []
+    if isinstance(value, str):
+        items = value.split()
+    elif isinstance(value, (list, tuple)):
+        items = [str(v).strip() for v in value]
+    else:
+        raise ValueError(f"scope must be a list or string, got {type(value).__name__}")
+    seen: list[str] = []
+    for item in items:
+        if item and item not in seen:
+            seen.append(item)
+    return seen
+
+
+def _default_scope_env(base_url_env: str) -> str:
+    """COMPASS_OAUTH_SCOPE for production, COMPASS_OAUTH_SCOPE_TRN for training."""
+    return "COMPASS_OAUTH_SCOPE_TRN" if base_url_env.endswith("_TRN") else "COMPASS_OAUTH_SCOPE"
+
+
+def resolve_grant(raw: dict[str, Any]) -> str:
+    """Decide which OAuth2 grant an .ionapi file is meant for.
+
+    ``gt`` wins when present. Older password-grant files have no ``gt`` and are
+    recognised by their service-account keys (``saak``/``sask``).
+    """
+    gt = raw.get("gt")
+    if gt:
+        grant = str(gt).strip().lower()
+        if grant not in SUPPORTED_GRANTS:
+            raise ValueError(
+                f"unsupported grant type gt={gt!r} (supported: {', '.join(SUPPORTED_GRANTS)})"
+            )
+        return grant
+    if raw.get("saak") and raw.get("sask"):
+        return GRANT_PASSWORD
+    raise ValueError(
+        "cannot tell which OAuth2 grant to use: no 'gt' key and no 'saak'/'sask' "
+        "service-account keys (expected gt=client_credentials or a password-grant file)"
+    )
+
+
 class IonApiConfig:
     """Parsed .ionapi file plus the derived URLs we need."""
 
@@ -94,12 +154,37 @@ class IonApiConfig:
         raw: dict[str, Any],
         base_url_env: str = "COMPASS_BASE_URL",
         csd_base_url_env: str = "CSD_BASE_URL",
+        scope_env: str | None = None,
     ):
         self.tenant = raw["ti"]
         self.client_id = raw["ci"]
         self.client_secret = raw["cs"]
-        self.saak = raw["saak"]
-        self.sask = raw["sask"]
+
+        self.grant_type = resolve_grant(raw)
+        # Service-account credentials are only used (and only required) for the
+        # password grant. A client-credentials file doesn't have them.
+        if self.grant_type == GRANT_PASSWORD:
+            missing_sa = [k for k in ("saak", "sask") if not raw.get(k)]
+            if missing_sa:
+                raise ValueError(f"password grant requires keys: {missing_sa}")
+            self.saak: str | None = raw["saak"]
+            self.sask: str | None = raw["sask"]
+        else:
+            self.saak = None
+            self.sask = None
+
+        # Scopes: ``sc`` in the .ionapi file is sent whenever present (needed
+        # if the Authorized App enforces scopes, harmless if it doesn't). An
+        # env var, when set, replaces it so a user can narrow what they ask
+        # for; set it to an empty value to send no scope at all. ION enforces
+        # the app's scopes server-side, so this can narrow access but never
+        # widen it.
+        self.scopes: list[str] = parse_scopes(raw.get("sc"))
+        scope_env = scope_env or _default_scope_env(base_url_env)
+        self.scope_env = scope_env
+        env_scope = os.environ.get(scope_env)
+        if env_scope is not None:
+            self.scopes = parse_scopes(env_scope)
 
         ion_base = raw["iu"].rstrip("/")
 
@@ -126,13 +211,22 @@ class IonApiConfig:
         path: Path,
         base_url_env: str = "COMPASS_BASE_URL",
         csd_base_url_env: str = "CSD_BASE_URL",
+        scope_env: str | None = None,
     ) -> "IonApiConfig":
         with open(path, "r", encoding="utf-8") as fh:
             raw = json.load(fh)
-        missing = [k for k in ("ti", "ci", "cs", "saak", "sask", "iu", "pu", "ot") if k not in raw]
+        missing = [k for k in ("ti", "ci", "cs", "iu", "pu", "ot") if k not in raw]
         if missing:
             raise ValueError(f"{path} is missing required keys: {missing}")
-        return cls(raw, base_url_env=base_url_env, csd_base_url_env=csd_base_url_env)
+        try:
+            return cls(
+                raw,
+                base_url_env=base_url_env,
+                csd_base_url_env=csd_base_url_env,
+                scope_env=scope_env,
+            )
+        except ValueError as e:
+            raise ValueError(f"{path}: {e}") from None
 
 
 class TokenManager:
@@ -141,6 +235,9 @@ class TokenManager:
         self._lock = threading.Lock()
         self._token: str | None = None
         self._expires_at: float = 0.0
+        # Scopes ION reports it actually granted on the last token response
+        # (None until a token has been fetched, or if the response omitted it).
+        self.granted_scopes: list[str] | None = None
 
     def get_token(self, client: httpx.Client) -> str:
         with self._lock:
@@ -148,31 +245,103 @@ class TokenManager:
                 return self._token
             return self._refresh(client)
 
-    def _refresh(self, client: httpx.Client) -> str:
+    def invalidate(self, stale_token: str) -> None:
+        """Forget *stale_token* so the next get_token() fetches a new one.
+
+        Only clears the cache if it still holds that token, so a request that
+        got a 401 can't discard a newer token another thread already fetched.
+        """
+        with self._lock:
+            if self._token == stale_token:
+                self._token = None
+                self._expires_at = 0.0
+
+    def _request_data(self) -> dict[str, str]:
         data = {
-            "grant_type": "password",
+            "grant_type": self.cfg.grant_type,
             "client_id": self.cfg.client_id,
             "client_secret": self.cfg.client_secret,
-            "username": self.cfg.saak,
-            "password": self.cfg.sask,
         }
+        if self.cfg.grant_type == GRANT_PASSWORD:
+            data["username"] = self.cfg.saak or ""
+            data["password"] = self.cfg.sask or ""
+        if self.cfg.scopes:
+            data["scope"] = " ".join(self.cfg.scopes)
+        return data
+
+    def _token_error(self, resp: httpx.Response) -> RuntimeError:
+        """Turn a failed token response into a readable error."""
+        code = description = None
+        try:
+            body = resp.json()
+            if isinstance(body, dict):
+                code = body.get("error")
+                description = body.get("error_description")
+        except Exception:
+            pass
+        detail = resp.text[:500]
+        # ION reports a rejected scope as error="invalid_grant" with
+        # error_description="invalid_scope", not as error="invalid_scope", so
+        # look for the marker in both fields.
+        marker = f"{code or ''} {description or ''}".lower()
+        if "invalid_scope" in marker:
+            return RuntimeError(
+                f"OAuth token request rejected the requested scope "
+                f"{' '.join(self.cfg.scopes) or '(none)'!r} (grant: {self.cfg.grant_type}). "
+                f"The Authorized App doesn't permit it — check the 'sc' list in the "
+                f".ionapi file (it may be stale if scopes were removed from the app "
+                f"after the file was downloaded) and the app's scopes in ION API. "
+                f"To override without editing the file, set {self.cfg.scope_env} to a "
+                f"narrower space-separated list, or to an empty value to send none. "
+                f"Server said: {description or detail}"
+            )
+        if "invalid_client" in marker:
+            return RuntimeError(
+                f"OAuth token request failed: invalid client credentials "
+                f"(grant: {self.cfg.grant_type}). The .ionapi 'ci'/'cs' may be revoked or "
+                f"expired — re-download it from ION API. Server said: {description or detail}"
+            )
+        return RuntimeError(
+            f"OAuth token request failed ({resp.status_code}, grant: {self.cfg.grant_type}): {detail}"
+        )
+
+    def _refresh(self, client: httpx.Client) -> str:
         resp = client.post(
             self.cfg.token_url,
-            data=data,
+            data=self._request_data(),
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             timeout=HTTP_TIMEOUT,
         )
         if resp.status_code != 200:
-            raise RuntimeError(
-                f"OAuth token request failed ({resp.status_code}): {resp.text[:500]}"
-            )
+            raise self._token_error(resp)
         payload = resp.json()
         token = payload.get("access_token")
         if not token:
-            raise RuntimeError(f"No access_token in token response: {payload}")
+            # Don't echo the payload: it is a token response and may carry secrets.
+            raise RuntimeError(
+                f"No access_token in token response (keys: {sorted(payload)})"
+            )
         self._token = token
         self._expires_at = time.time() + float(payload.get("expires_in", 3600))
+        granted = payload.get("scope")
+        self.granted_scopes = parse_scopes(granted) if granted is not None else None
         return token
+
+    def auth_info(self) -> dict[str, Any]:
+        """Which grant/scopes are in use, for ping/selftest output. No secrets."""
+        requested = list(self.cfg.scopes)
+        info: dict[str, Any] = {
+            "grant_type": self.cfg.grant_type,
+            "scope_requested": requested,
+            "scope_granted": self.granted_scopes,
+        }
+        if self.cfg.grant_type == GRANT_PASSWORD:
+            info["notice"] = PASSWORD_GRANT_NOTICE
+        if self.granted_scopes is not None and requested:
+            narrowed = [s for s in requested if s not in self.granted_scopes]
+            if narrowed:
+                info["warning"] = f"requested scope(s) not granted: {' '.join(narrowed)}"
+        return info
 
 
 class PageTooLargeError(RuntimeError):
@@ -185,31 +354,57 @@ class CompassClient:
         self.tokens = tokens
         self.client = httpx.Client(timeout=HTTP_TIMEOUT)
 
-    def _auth_headers(self, extra: dict[str, str] | None = None) -> dict[str, str]:
-        headers = {"Authorization": f"Bearer {self.tokens.get_token(self.client)}"}
-        if extra:
-            headers.update(extra)
-        return headers
+    def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+        **kwargs: Any,
+    ) -> httpx.Response:
+        """Send an authenticated request.
+
+        If ION answers 401 (the cached token was revoked, or expired earlier
+        than expires_in said), drop that token and retry once with a fresh one.
+        Anything else — including a 403 scope violation, which a new token
+        can't fix — is returned untouched for the caller to handle.
+        """
+        for attempt in (1, 2):
+            token = self.tokens.get_token(self.client)
+            resp = self.client.request(
+                method,
+                url,
+                headers={"Authorization": f"Bearer {token}", **(headers or {})},
+                **kwargs,
+            )
+            if resp.status_code != 401 or attempt == 2:
+                return resp
+            self.tokens.invalidate(token)
+        return resp  # pragma: no cover - loop always returns
 
     def ping(self) -> dict[str, Any]:
         url = f"{self.cfg.compass_base}/ping"
-        resp = self.client.get(url, headers=self._auth_headers())
+        resp = self._request("GET", url)
         ok = resp.status_code == 200
         try:
             body = resp.json()
         except Exception:
             body = resp.text
-        return {"ok": ok, "status_code": resp.status_code, "response": body}
+        return {
+            "ok": ok,
+            "status_code": resp.status_code,
+            "response": body,
+            "auth": self.tokens.auth_info(),
+        }
 
     def submit(self, sql: str) -> str:
         """Submit SQL, return the queryId."""
         url = f"{self.cfg.compass_base}/jobs/"
-        resp = self.client.post(
+        resp = self._request(
+            "POST",
             url,
             content=sql.encode("utf-8"),
-            headers=self._auth_headers(
-                {"Content-Type": "text/plain", "Accept": "application/json"}
-            ),
+            headers={"Content-Type": "text/plain", "Accept": "application/json"},
         )
         if resp.status_code not in (200, 201, 202):
             raise RuntimeError(
@@ -239,7 +434,7 @@ class CompassClient:
 
     def status(self, query_id: str) -> dict[str, Any]:
         url = f"{self.cfg.compass_base}/jobs/{query_id}/status/"
-        resp = self.client.get(url, headers=self._auth_headers({"Accept": "application/json"}))
+        resp = self._request("GET", url, headers={"Accept": "application/json"})
         if resp.status_code not in (200, 201, 202):
             raise RuntimeError(
                 f"Failed to get status ({resp.status_code}): {resp.text[:500]}"
@@ -253,10 +448,11 @@ class CompassClient:
         callers can retry with a smaller limit.
         """
         url = f"{self.cfg.compass_base}/jobs/{query_id}/result/"
-        resp = self.client.get(
+        resp = self._request(
+            "GET",
             url,
             params={"offset": offset, "limit": limit},
-            headers=self._auth_headers({"Accept": "application/json"}),
+            headers={"Accept": "application/json"},
         )
         if resp.status_code == 400:
             body_text = resp.text
@@ -404,10 +600,11 @@ class CompassClient:
             "BatchSize": batch_size,
             "RestartRowID": restart_row_id or "",
         }
-        resp = self.client.post(
+        resp = self._request(
+            "POST",
             url,
             json=payload,
-            headers=self._auth_headers({"Accept": "application/json"}),
+            headers={"Accept": "application/json"},
         )
         if resp.status_code != 200:
             raise RuntimeError(
@@ -474,6 +671,7 @@ def get_client_for_env(
     base_url_env: str = "COMPASS_BASE_URL",
     config_dir: Path | None = None,
     csd_base_url_env: str = "CSD_BASE_URL",
+    scope_env: str | None = None,
 ) -> CompassClient:
     """Build a CompassClient for a specific environment (PRD, TRN, etc.).
 
@@ -483,6 +681,9 @@ def get_client_for_env(
         base_url_env: Environment variable name for Compass base URL override (e.g. COMPASS_BASE_URL_TRN)
         config_dir: Directory to search for credentials (defaults to this module's directory)
         csd_base_url_env: Environment variable name for CSD FetchWhere base URL override (e.g. CSD_BASE_URL_TRN)
+        scope_env: Environment variable that overrides the OAuth scope(s) from the .ionapi
+            ``sc`` key. Defaults to COMPASS_OAUTH_SCOPE, or COMPASS_OAUTH_SCOPE_TRN when
+            base_url_env ends in _TRN.
 
     Returns:
         A CompassClient configured for the specified environment.
@@ -491,5 +692,6 @@ def get_client_for_env(
         find_ionapi_file(config_dir, env_var=env_var, default_name=default_name),
         base_url_env=base_url_env,
         csd_base_url_env=csd_base_url_env,
+        scope_env=scope_env,
     )
     return CompassClient(cfg, TokenManager(cfg))

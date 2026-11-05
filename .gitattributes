@@ -10,3 +10,7 @@
 *.py text eol=lf
 *.ps1 text eol=lf
 *.md text eol=lf
+
+# Dev-only files: keep them out of the release zip (build-release uses git archive).
+tests/ export-ignore
+requirements-dev.txt export-ignore
