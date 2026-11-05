@@ -90,6 +90,12 @@ GRANT_PASSWORD = "password"
 GRANT_CLIENT_CREDENTIALS = "client_credentials"
 SUPPORTED_GRANTS = (GRANT_PASSWORD, GRANT_CLIENT_CREDENTIALS)
 
+PASSWORD_GRANT_NOTICE = (
+    "Using the OAuth2 password grant. client_credentials is recommended: it needs no "
+    "service-account password and can be limited with enforced scopes. See "
+    "'OAuth grant types and scopes' in the README."
+)
+
 
 def parse_scopes(value: Any) -> list[str]:
     """Normalize a scope value into a de-duplicated list of scope names.
@@ -175,6 +181,7 @@ class IonApiConfig:
         # widen it.
         self.scopes: list[str] = parse_scopes(raw.get("sc"))
         scope_env = scope_env or _default_scope_env(base_url_env)
+        self.scope_env = scope_env
         env_scope = os.environ.get(scope_env)
         if env_scope is not None:
             self.scopes = parse_scopes(env_scope)
@@ -282,7 +289,10 @@ class TokenManager:
                 f"OAuth token request rejected the requested scope "
                 f"{' '.join(self.cfg.scopes) or '(none)'!r} (grant: {self.cfg.grant_type}). "
                 f"The Authorized App doesn't permit it — check the 'sc' list in the "
-                f".ionapi file and the app's scopes in ION API. "
+                f".ionapi file (it may be stale if scopes were removed from the app "
+                f"after the file was downloaded) and the app's scopes in ION API. "
+                f"To override without editing the file, set {self.cfg.scope_env} to a "
+                f"narrower space-separated list, or to an empty value to send none. "
                 f"Server said: {description or detail}"
             )
         if "invalid_client" in marker:
@@ -325,6 +335,8 @@ class TokenManager:
             "scope_requested": requested,
             "scope_granted": self.granted_scopes,
         }
+        if self.cfg.grant_type == GRANT_PASSWORD:
+            info["notice"] = PASSWORD_GRANT_NOTICE
         if self.granted_scopes is not None and requested:
             narrowed = [s for s in requested if s not in self.granted_scopes]
             if narrowed:

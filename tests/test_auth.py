@@ -381,3 +381,35 @@ def test_invalidate_ignores_a_token_that_is_no_longer_current(tmp_path):
     assert seen == []                         # served from cache, no new request
     tm.invalidate("tok-new")                  # the current token: now it must refetch
     assert tm.get_token(token_client({"access_token": "tok-3"})) == "tok-3"
+
+
+# --- password-grant files that carry scopes; migration nudge ----------------
+
+def test_invalid_scope_error_names_the_override_env_var(tmp_path):
+    cfg = IonApiConfig.load(write(tmp_path, {**CC_FILE, "sc": ["Stale"]}),
+                            base_url_env="COMPASS_BASE_URL_TRN")
+    resp = httpx.Response(400, json={"error": "invalid_grant", "error_description": "invalid_scope"})
+    with pytest.raises(RuntimeError) as ei:
+        TokenManager(cfg).get_token(token_client(resp))
+    msg = str(ei.value)
+    assert "COMPASS_OAUTH_SCOPE_TRN" in msg and "stale" in msg.lower()
+
+
+def test_stale_sc_on_password_file_can_be_worked_around_with_empty_env(tmp_path, monkeypatch):
+    path = write(tmp_path, {**PASSWORD_FILE, "sc": ["Stale"]})
+    assert IonApiConfig.load(path).scopes == ["Stale"]
+    monkeypatch.setenv("COMPASS_OAUTH_SCOPE", "")
+    seen: list = []
+    TokenManager(IonApiConfig.load(path)).get_token(token_client({"access_token": "t"}, seen))
+    assert "scope" not in seen[0] and seen[0]["grant_type"] == "password"
+
+
+def test_password_grant_reports_a_migration_notice(tmp_path):
+    cfg = IonApiConfig.load(write(tmp_path, PASSWORD_FILE))
+    info = TokenManager(cfg).auth_info()
+    assert "client_credentials is recommended" in info["notice"]
+
+
+def test_client_credentials_has_no_notice(tmp_path):
+    cfg = IonApiConfig.load(write(tmp_path, CC_FILE))
+    assert "notice" not in TokenManager(cfg).auth_info()

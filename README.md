@@ -370,18 +370,35 @@ the `.ionapi` file itself, so there is nothing extra to configure:
 | `.ionapi` file | Grant used |
 |---|---|
 | `"gt": "client_credentials"` | **client credentials** — sends only `ci` / `cs`. No service account (`saak`/`sask`) needed. Recommended for new setups and for anyone you share the server with. |
-| `"gt": "password"`, or no `gt` but `saak` + `sask` present | **password** — the original behavior; existing files keep working unchanged. |
+| `"gt": "password"`, or no `gt` but `saak` + `sask` present | **password** — the original behavior. Still supported, but **we recommend moving to client credentials** (see below). |
 
 Create a client-credentials file in ION API → **Authorized Apps** → add an app
 with the *Backend Service* / client-credentials option, then **Download
 credentials**.
 
+**Moving from password to client credentials.** The password grant needs a
+service account's key and secret in the file; client credentials uses only the
+app's own client ID and secret, and can be restricted with enforced scopes.
+To switch:
+
+1. In ION API → **Authorized Apps**, create a client-credentials app with the
+   scopes you need (e.g. `Infor-DataFabric`, plus `Infor-SX` if you use the
+   `fetch_csd` tools) and choose to enforce them.
+2. Download its credentials and replace `credentials.ionapi` (or
+   `credentials_trn.ionapi`) with the new file.
+3. Run `python server.py --selftest` (add `--trn` for training) and check it
+   shows `Grant type: client_credentials`.
+
 **Scopes.** If the downloaded file has an `sc` list (e.g.
 `"sc": ["Infor-DataFabric"]`), those scopes are sent with every token request.
 This is needed when the Authorized App *enforces* scopes (a client that doesn't
 ask for them is denied) and harmless when it doesn't. Files without `sc` send no
-scope, as before. Scopes are enforced by ION, so the app can only ever be given
-what its Authorized App allows.
+scope, as before. This applies to password-grant files too: one that carries `sc`
+now sends it (ION accepts a scope on the password grant). That only matters if the
+list is *stale*, e.g. a scope was removed from the app after the file was
+downloaded; the resulting `invalid_scope` error says so, and the fix is to
+re-download the file or set `COMPASS_OAUTH_SCOPE` (below). Scopes are enforced by
+ION, so the app can only ever be given what its Authorized App allows.
 
 To ask for *fewer* scopes than the file lists (for testing, say), set
 `COMPASS_OAUTH_SCOPE` (production) or `COMPASS_OAUTH_SCOPE_TRN` (training) to a

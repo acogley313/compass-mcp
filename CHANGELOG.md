@@ -8,7 +8,10 @@ All notable changes to Compass MCP are documented in this file.
 - **OAuth2 client-credentials grant** — an `.ionapi` file with `"gt": "client_credentials"`
   now works without the `saak`/`sask` service-account keys, so credentials can be issued
   per app (e.g. to a vendor) instead of per service account. Existing password-grant files
-  (no `gt`, or `"gt": "password"`) behave exactly as before.
+  (no `gt`, or `"gt": "password"`) keep working; the one difference is that if such a file
+  carries an `sc` list, those scopes are now sent too (see below). Password grant is now
+  flagged as deprecated-in-practice: `ping_compass` and `--selftest` recommend moving to
+  client credentials.
 - **OAuth scopes** — if the `.ionapi` file has an `sc` list, those scopes are sent with the
   token request (required when the Authorized App enforces scopes). `COMPASS_OAUTH_SCOPE` /
   `COMPASS_OAUTH_SCOPE_TRN` can narrow them. `ping_compass` and `--selftest` report the grant
