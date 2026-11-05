@@ -14,6 +14,9 @@ All notable changes to Compass MCP are documented in this file.
   `COMPASS_OAUTH_SCOPE_TRN` can narrow them. `ping_compass` and `--selftest` report the grant
   type and requested/granted scopes; `invalid_scope` and `invalid_client` failures now give a
   readable message.
+- **Automatic retry on 401** — if ION rejects the cached token (revoked, or expired early),
+  every Compass and CSD request now drops it, fetches a fresh one and retries once instead of
+  failing the query. A 403 (e.g. a missing scope) is not retried, since a new token can't fix it.
 - **Unit tests** for grant selection, scope handling and token errors (`tests/`, run with
   `python -m pytest tests/` after `pip install -r requirements-dev.txt`).
 - **`fetch_csd` / `fetch_csd_trn`** — read a table straight from the live CSD database

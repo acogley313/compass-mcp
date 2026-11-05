@@ -307,3 +307,77 @@ def test_ping_includes_auth_info(tmp_path):
         "scope_requested": ["Infor-DataFabric"],
         "scope_granted": ["Infor-DataFabric"],
     }
+
+
+# --- 401 retry --------------------------------------------------------------
+
+def retrying_client(tmp_path, api_statuses: list[int]):
+    """CompassClient whose token endpoint issues tok-1, tok-2, ... and whose API
+    answers with *api_statuses* in order (last one repeats).
+
+    Returns (client, token_requests, api_requests) where api_requests holds
+    (bearer_token, body) per call.
+    """
+    cfg = IonApiConfig.load(write(tmp_path, CC_FILE))
+    token_requests: list[int] = []
+    api_requests: list[tuple[str, bytes]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("token.oauth2"):
+            token_requests.append(1)
+            return httpx.Response(200, json={"access_token": f"tok-{len(token_requests)}",
+                                             "expires_in": 3600})
+        api_requests.append((request.headers["Authorization"].removeprefix("Bearer "),
+                             request.content))
+        status = api_statuses[min(len(api_requests) - 1, len(api_statuses) - 1)]
+        return httpx.Response(status, json={"queryId": "q1"} if status == 200 else {"error": "x"})
+
+    cc = CompassClient(cfg, TokenManager(cfg))
+    cc.client = httpx.Client(transport=httpx.MockTransport(handler))
+    return cc, token_requests, api_requests
+
+
+def test_401_triggers_one_retry_with_a_fresh_token(tmp_path):
+    cc, token_requests, api = retrying_client(tmp_path, [401, 200])
+    assert cc.ping()["ok"] is True
+    assert len(token_requests) == 2
+    assert [t for t, _ in api] == ["tok-1", "tok-2"]
+
+
+def test_persistent_401_is_retried_only_once(tmp_path):
+    cc, token_requests, api = retrying_client(tmp_path, [401])
+    out = cc.ping()
+    assert out["ok"] is False and out["status_code"] == 401
+    assert len(api) == 2 and len(token_requests) == 2
+
+
+def test_403_scope_violation_is_not_retried(tmp_path):
+    cc, token_requests, api = retrying_client(tmp_path, [403])
+    assert cc.ping()["status_code"] == 403
+    assert len(api) == 1 and len(token_requests) == 1
+
+
+def test_success_makes_no_extra_token_requests(tmp_path):
+    cc, token_requests, api = retrying_client(tmp_path, [200])
+    cc.ping(); cc.ping()
+    assert len(token_requests) == 1 and len(api) == 2
+
+
+def test_post_body_is_resent_on_retry(tmp_path):
+    cc, _, api = retrying_client(tmp_path, [401, 200])
+    assert cc.submit("SELECT 1") == "q1"
+    assert [b for _, b in api] == [b"SELECT 1", b"SELECT 1"]
+    assert [t for t, _ in api] == ["tok-1", "tok-2"]
+
+
+def test_invalidate_ignores_a_token_that_is_no_longer_current(tmp_path):
+    cfg = IonApiConfig.load(write(tmp_path, CC_FILE))
+    tm = TokenManager(cfg)
+    client = token_client({"access_token": "tok-new", "expires_in": 3600})
+    assert tm.get_token(client) == "tok-new"
+    tm.invalidate("some-older-token")        # stale caller: must not discard tok-new
+    seen: list = []
+    assert tm.get_token(token_client({"access_token": "x"}, seen)) == "tok-new"
+    assert seen == []                         # served from cache, no new request
+    tm.invalidate("tok-new")                  # the current token: now it must refetch
+    assert tm.get_token(token_client({"access_token": "tok-3"})) == "tok-3"

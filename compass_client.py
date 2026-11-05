@@ -238,6 +238,17 @@ class TokenManager:
                 return self._token
             return self._refresh(client)
 
+    def invalidate(self, stale_token: str) -> None:
+        """Forget *stale_token* so the next get_token() fetches a new one.
+
+        Only clears the cache if it still holds that token, so a request that
+        got a 401 can't discard a newer token another thread already fetched.
+        """
+        with self._lock:
+            if self._token == stale_token:
+                self._token = None
+                self._expires_at = 0.0
+
     def _request_data(self) -> dict[str, str]:
         data = {
             "grant_type": self.cfg.grant_type,
@@ -331,15 +342,37 @@ class CompassClient:
         self.tokens = tokens
         self.client = httpx.Client(timeout=HTTP_TIMEOUT)
 
-    def _auth_headers(self, extra: dict[str, str] | None = None) -> dict[str, str]:
-        headers = {"Authorization": f"Bearer {self.tokens.get_token(self.client)}"}
-        if extra:
-            headers.update(extra)
-        return headers
+    def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+        **kwargs: Any,
+    ) -> httpx.Response:
+        """Send an authenticated request.
+
+        If ION answers 401 (the cached token was revoked, or expired earlier
+        than expires_in said), drop that token and retry once with a fresh one.
+        Anything else — including a 403 scope violation, which a new token
+        can't fix — is returned untouched for the caller to handle.
+        """
+        for attempt in (1, 2):
+            token = self.tokens.get_token(self.client)
+            resp = self.client.request(
+                method,
+                url,
+                headers={"Authorization": f"Bearer {token}", **(headers or {})},
+                **kwargs,
+            )
+            if resp.status_code != 401 or attempt == 2:
+                return resp
+            self.tokens.invalidate(token)
+        return resp  # pragma: no cover - loop always returns
 
     def ping(self) -> dict[str, Any]:
         url = f"{self.cfg.compass_base}/ping"
-        resp = self.client.get(url, headers=self._auth_headers())
+        resp = self._request("GET", url)
         ok = resp.status_code == 200
         try:
             body = resp.json()
@@ -355,12 +388,11 @@ class CompassClient:
     def submit(self, sql: str) -> str:
         """Submit SQL, return the queryId."""
         url = f"{self.cfg.compass_base}/jobs/"
-        resp = self.client.post(
+        resp = self._request(
+            "POST",
             url,
             content=sql.encode("utf-8"),
-            headers=self._auth_headers(
-                {"Content-Type": "text/plain", "Accept": "application/json"}
-            ),
+            headers={"Content-Type": "text/plain", "Accept": "application/json"},
         )
         if resp.status_code not in (200, 201, 202):
             raise RuntimeError(
@@ -390,7 +422,7 @@ class CompassClient:
 
     def status(self, query_id: str) -> dict[str, Any]:
         url = f"{self.cfg.compass_base}/jobs/{query_id}/status/"
-        resp = self.client.get(url, headers=self._auth_headers({"Accept": "application/json"}))
+        resp = self._request("GET", url, headers={"Accept": "application/json"})
         if resp.status_code not in (200, 201, 202):
             raise RuntimeError(
                 f"Failed to get status ({resp.status_code}): {resp.text[:500]}"
@@ -404,10 +436,11 @@ class CompassClient:
         callers can retry with a smaller limit.
         """
         url = f"{self.cfg.compass_base}/jobs/{query_id}/result/"
-        resp = self.client.get(
+        resp = self._request(
+            "GET",
             url,
             params={"offset": offset, "limit": limit},
-            headers=self._auth_headers({"Accept": "application/json"}),
+            headers={"Accept": "application/json"},
         )
         if resp.status_code == 400:
             body_text = resp.text
@@ -555,10 +588,11 @@ class CompassClient:
             "BatchSize": batch_size,
             "RestartRowID": restart_row_id or "",
         }
-        resp = self.client.post(
+        resp = self._request(
+            "POST",
             url,
             json=payload,
-            headers=self._auth_headers({"Accept": "application/json"}),
+            headers={"Accept": "application/json"},
         )
         if resp.status_code != 200:
             raise RuntimeError(
