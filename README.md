@@ -320,9 +320,10 @@ started.
 
 ## How it works
 
-1. **Auth** — reads `credentials.ionapi`, performs an OAuth2 *password* grant
-   against the ION token endpoint (`pu` + `ot`), caches the bearer token and
-   refreshes it ~60s before expiry.
+1. **Auth** — reads `credentials.ionapi`, performs an OAuth2 token request
+   against the ION token endpoint (`pu` + `ot`) using the grant the file is set
+   up for (see [OAuth grant types and scopes](#oauth-grant-types-and-scopes)),
+   caches the bearer token and refreshes it ~60s before expiry.
 2. **Submit** — `POST {base}/jobs/` with the SQL as a plain-text body → returns
    a `queryId`.
 3. **Poll** — `GET {base}/jobs/{queryId}/status/` every 2s. Compass returns
@@ -361,11 +362,49 @@ Claude config's `env` block if needed, e.g. a longer timeout for big queries:
 `fetch_csd` / `fetch_csd_trn` need `CSD_OPERATOR_INIT` set the same way — see
 **One-time setup: `CSD_OPERATOR_INIT`** above.
 
+## OAuth grant types and scopes
+
+The server supports two ION API grant types. Which one is used is decided by
+the `.ionapi` file itself, so there is nothing extra to configure:
+
+| `.ionapi` file | Grant used |
+|---|---|
+| `"gt": "client_credentials"` | **client credentials** — sends only `ci` / `cs`. No service account (`saak`/`sask`) needed. Recommended for new setups and for anyone you share the server with. |
+| `"gt": "password"`, or no `gt` but `saak` + `sask` present | **password** — the original behavior; existing files keep working unchanged. |
+
+Create a client-credentials file in ION API → **Authorized Apps** → add an app
+with the *Backend Service* / client-credentials option, then **Download
+credentials**.
+
+**Scopes.** If the downloaded file has an `sc` list (e.g.
+`"sc": ["Infor-DataFabric"]`), those scopes are sent with every token request.
+This is needed when the Authorized App *enforces* scopes (a client that doesn't
+ask for them is denied) and harmless when it doesn't. Files without `sc` send no
+scope, as before. Scopes are enforced by ION, so the app can only ever be given
+what its Authorized App allows.
+
+To ask for *fewer* scopes than the file lists (for testing, say), set
+`COMPASS_OAUTH_SCOPE` (production) or `COMPASS_OAUTH_SCOPE_TRN` (training) to a
+space-separated list. Set it to an empty value to send no scope. It can narrow
+access but never widen it beyond the Authorized App's scopes.
+
+`ping_compass` and `python server.py --selftest` show the grant type and which
+scopes were requested and granted, and warn if ION granted fewer than requested.
+A rejected scope produces an `invalid_scope` error that names the scope.
+
+A scope limits which *APIs* a token can call. It does not limit which Compass
+tables a query can read — use Data Fabric permissions on the Authorized App for
+that.
+
 ## Security
 
 - `credentials.ionapi` contains live secrets for your Infor tenant. **Never
   commit it to git or share it outside your organization.** The included
   `.gitignore` keeps it (and any other `*.ionapi` file) out of version control.
+- When giving the server to someone outside your organization (a vendor, say),
+  create a dedicated client-credentials Authorized App for them with enforced
+  scopes limited to what they need, and send them only that file — never your
+  own `credentials.ionapi`.
 - Each person should use their own `.ionapi` file, scoped to whatever
   permissions their Infor admin has granted them — don't pass credentials
   files around between teammates.

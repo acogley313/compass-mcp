@@ -5,6 +5,17 @@ All notable changes to Compass MCP are documented in this file.
 ## [Unreleased]
 
 ### Added
+- **OAuth2 client-credentials grant** — an `.ionapi` file with `"gt": "client_credentials"`
+  now works without the `saak`/`sask` service-account keys, so credentials can be issued
+  per app (e.g. to a vendor) instead of per service account. Existing password-grant files
+  (no `gt`, or `"gt": "password"`) behave exactly as before.
+- **OAuth scopes** — if the `.ionapi` file has an `sc` list, those scopes are sent with the
+  token request (required when the Authorized App enforces scopes). `COMPASS_OAUTH_SCOPE` /
+  `COMPASS_OAUTH_SCOPE_TRN` can narrow them. `ping_compass` and `--selftest` report the grant
+  type and requested/granted scopes; `invalid_scope` and `invalid_client` failures now give a
+  readable message.
+- **Unit tests** for grant selection, scope handling and token errors (`tests/`, run with
+  `python -m pytest tests/` after `pip install -r requirements-dev.txt`).
 - **`fetch_csd` / `fetch_csd_trn`** — read a table straight from the live CSD database
   (Infor's FetchWhere service) instead of the Compass datalake replica, for when the
   replica is stale or out of sync. No SQL: a table name plus an optional WHERE clause,
